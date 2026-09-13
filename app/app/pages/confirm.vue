@@ -1,0 +1,3 @@
+<template>
+  <AuthConfirmStatus />
+</template>
