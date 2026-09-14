@@ -32,7 +32,14 @@ export type SupplierTransfer =
 export type SupplierDelivery =
   Database["public"]["Tables"]["warehouse_deliveries"]["Row"] & {
     warehouses?: { id: string; name: string } | null;
+    warehouse_sections?: { id: string; name: string; warehouse_id: string } | null;
   };
+
+type WarehouseSectionLite = {
+  id: string;
+  name: string;
+  warehouse_id: string;
+};
 
 type SeasonLite = { id: string; name: string; ardab_factor: number };
 type WarehouseLite = { id: string; name: string };
@@ -60,6 +67,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const due = ref<SupplierDue | null>(null);
   const activeSeason = ref<SeasonLite | null>(null);
   const warehouses = ref<WarehouseLite[]>([]);
+  const sections = ref<WarehouseSectionLite[]>([]);
   const purchases = ref<SupplierPurchase[]>([]);
   const transfers = ref<SupplierTransfer[]>([]);
   const deliveries = ref<SupplierDelivery[]>([]);
@@ -93,6 +101,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const deliveryForm = reactive({
     warehouse_id: "" as string,
+    section_id: "" as string,
     delivery_date: todayIsoDate(),
     quantity_kg: "" as string,
     nolon_total: "" as string,
@@ -142,6 +151,27 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const warehouseOptions = computed(() =>
     warehouses.value.map((w) => ({ label: w.name, value: w.id })),
   );
+
+  const sectionOptions = computed(() =>
+    sections.value
+      .filter((s) => s.warehouse_id === deliveryForm.warehouse_id)
+      .map((s) => ({ label: s.name, value: s.id })),
+  );
+
+  const syncSectionForWarehouse = () => {
+    const options = sectionOptions.value;
+    if (!options.length) {
+      deliveryForm.section_id = "";
+      return;
+    }
+    if (!options.some((o) => o.value === deliveryForm.section_id)) {
+      deliveryForm.section_id = options[0]?.value || "";
+    }
+  };
+
+  const onDeliveryWarehouseChange = () => {
+    syncSectionForWarehouse();
+  };
 
   const purchasePriceStats = computed(() => {
     const rows = purchases.value;
@@ -421,21 +451,43 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   };
 
   const ensureWarehousesLoaded = async () => {
-    if (warehouses.value.length) return true;
-    const { data, error } = await client
-      .from("warehouses")
-      .select("id, name")
-      .eq("is_active", true)
-      .order("name");
-    if (error) {
+    const needWarehouses = !warehouses.value.length;
+    const needSections = !sections.value.length;
+    if (!needWarehouses && !needSections) return true;
+    const [whRes, secRes] = await Promise.all([
+      needWarehouses
+        ? client
+            .from("warehouses")
+            .select("id, name")
+            .eq("is_active", true)
+            .order("name")
+        : Promise.resolve({ data: warehouses.value, error: null }),
+      needSections
+        ? client
+            .from("warehouse_sections")
+            .select("id, name, warehouse_id")
+            .eq("is_active", true)
+            .order("name")
+        : Promise.resolve({ data: sections.value, error: null }),
+    ]);
+    if (whRes.error) {
       toast.add({
         title: "تعذر تحميل الشون",
-        description: error.message,
+        description: whRes.error.message,
         color: "error",
       });
       return false;
     }
-    warehouses.value = data ?? [];
+    if (secRes.error) {
+      toast.add({
+        title: "تعذر تحميل الأرباع",
+        description: secRes.error.message,
+        color: "error",
+      });
+      return false;
+    }
+    if (needWarehouses) warehouses.value = whRes.data ?? [];
+    if (needSections) sections.value = secRes.data ?? [];
     return true;
   };
 
@@ -520,6 +572,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     }
     editingDelivery.value = null;
     deliveryForm.warehouse_id = warehouses.value[0]?.id || "";
+    syncSectionForWarehouse();
     deliveryForm.delivery_date = todayIsoDate();
     deliveryForm.quantity_kg = "";
     deliveryForm.nolon_total = "";
@@ -536,6 +589,8 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     if (!(await ensureWarehousesLoaded())) return;
     editingDelivery.value = row;
     deliveryForm.warehouse_id = row.warehouse_id;
+    deliveryForm.section_id = row.section_id;
+    syncSectionForWarehouse();
     deliveryForm.delivery_date = row.delivery_date;
     deliveryForm.quantity_kg = String(row.quantity_kg);
     deliveryForm.nolon_total = String(row.nolon_total ?? 0);
@@ -657,8 +712,8 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       toast.add({ title: "الكمية يجب أن تكون أكبر من صفر", color: "warning" });
       return;
     }
-    if (!(pricePerArdab >= 0)) {
-      toast.add({ title: "سعر الأردب غير صالح", color: "warning" });
+    if (!purchaseForm.price_per_ardab.trim() || !(pricePerArdab > 0)) {
+      toast.add({ title: "سعر الأردب مطلوب", color: "warning" });
       return;
     }
 
@@ -713,6 +768,26 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       return;
     }
 
+    // تحويل: cannot exceed remaining purchase due
+    if (transferForm.kind === "transfer") {
+      let maxAllowed = Number(due.value?.balance ?? 0);
+      if (
+        editingTransfer.value &&
+        editingTransfer.value.kind !== "commission"
+      ) {
+        maxAllowed += Number(editingTransfer.value.amount);
+      }
+      maxAllowed = Number(maxAllowed.toFixed(2));
+      if (amount > maxAllowed + 0.001) {
+        toast.add({
+          title: "المبلغ أكبر من المستحق",
+          description: `المتبقي المتاح: ${maxAllowed.toFixed(2)} جنيه`,
+          color: "warning",
+        });
+        return;
+      }
+    }
+
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: supplier.value.id,
@@ -751,6 +826,22 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     const quantityKg = parseDecimal(deliveryForm.quantity_kg);
     if (!deliveryForm.warehouse_id) {
       toast.add({ title: "اختر الشونة", color: "warning" });
+      return;
+    }
+    if (!deliveryForm.section_id) {
+      toast.add({ title: "اختر الربع", color: "warning" });
+      return;
+    }
+    const sectionOk = sections.value.some(
+      (s) =>
+        s.id === deliveryForm.section_id
+        && s.warehouse_id === deliveryForm.warehouse_id,
+    );
+    if (!sectionOk) {
+      toast.add({
+        title: "الربع لا يتبع الشونة المحددة",
+        color: "warning",
+      });
       return;
     }
     if (!deliveryForm.delivery_date) {
@@ -802,6 +893,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       season_id: activeSeason.value.id,
       supplier_id: supplier.value.id,
       warehouse_id: deliveryForm.warehouse_id,
+      section_id: deliveryForm.section_id,
       delivery_date: deliveryForm.delivery_date,
       quantity_kg: quantityKg,
       ardab: computedDeliveryArdab.value,
@@ -1003,30 +1095,38 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
     loading.value = true;
     try {
-      const [supplierRes, seasonRes, warehousesRes] = await Promise.all([
-        client
-          .from("suppliers")
-          .select("id, name, notes, is_active, account_type")
-          .eq("id", id)
-          .maybeSingle(),
-        client
-          .from("seasons")
-          .select("id, name, ardab_factor")
-          .eq("is_active", true)
-          .maybeSingle(),
-        client
-          .from("warehouses")
-          .select("id, name")
-          .eq("is_active", true)
-          .order("name"),
-      ]);
+      const [supplierRes, seasonRes, warehousesRes, sectionsRes] =
+        await Promise.all([
+          client
+            .from("suppliers")
+            .select("id, name, notes, is_active, account_type")
+            .eq("id", id)
+            .maybeSingle(),
+          client
+            .from("seasons")
+            .select("id, name, ardab_factor")
+            .eq("is_active", true)
+            .maybeSingle(),
+          client
+            .from("warehouses")
+            .select("id, name")
+            .eq("is_active", true)
+            .order("name"),
+          client
+            .from("warehouse_sections")
+            .select("id, name, warehouse_id")
+            .eq("is_active", true)
+            .order("name"),
+        ]);
       if (supplierRes.error) throw supplierRes.error;
       if (seasonRes.error) throw seasonRes.error;
       if (warehousesRes.error) throw warehousesRes.error;
+      if (sectionsRes.error) throw sectionsRes.error;
 
       supplier.value = supplierRes.data;
       activeSeason.value = seasonRes.data;
       warehouses.value = warehousesRes.data ?? [];
+      sections.value = sectionsRes.data ?? [];
 
       if (!supplierRes.data || !seasonRes.data) {
         due.value = null;
@@ -1061,7 +1161,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
             .order("created_at", { ascending: true }),
           client
             .from("warehouse_deliveries")
-            .select("*, warehouses(id, name)")
+            .select("*, warehouses(id, name), warehouse_sections(id, name, warehouse_id)")
             .eq("supplier_id", id)
             .eq("season_id", seasonId)
             .eq("is_cancelled", false)
@@ -1159,6 +1259,8 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     computedPurchaseTotal,
     computedDeliveryArdab,
     warehouseOptions,
+    sectionOptions,
+    onDeliveryWarehouseChange,
     transferKindOptions,
     supplierAccountTypeOptions,
     transferKindLabel: (kind: TransferKind | string) => transferKindLabel(kind),

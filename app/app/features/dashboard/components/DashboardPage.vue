@@ -43,8 +43,8 @@ const {
         <p class="text-xl font-semibold mt-2">
           {{ purchasesCount }}
         </p>
-        <UButton to="/purchases" variant="link" class="px-0 mt-1">
-          إدارة المشتريات
+        <UButton to="/suppliers" variant="link" class="px-0 mt-1">
+          من كشف المورد
         </UButton>
       </UCard>
 
@@ -55,8 +55,8 @@ const {
         <p class="text-xl font-semibold mt-2">
           {{ transfersCount }}
         </p>
-        <UButton to="/cash-transfers" variant="link" class="px-0 mt-1">
-          إدارة التحويلات
+        <UButton to="/suppliers" variant="link" class="px-0 mt-1">
+          من كشف المورد
         </UButton>
       </UCard>
 
@@ -67,8 +67,8 @@ const {
         <p class="text-xl font-semibold mt-2">
           {{ deliveriesCount }}
         </p>
-        <UButton to="/deliveries" variant="link" class="px-0 mt-1">
-          إدارة التسليمات
+        <UButton to="/suppliers" variant="link" class="px-0 mt-1">
+          من كشف المورد
         </UButton>
       </UCard>
 

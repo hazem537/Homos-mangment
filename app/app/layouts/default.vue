@@ -23,24 +23,24 @@ const links = [
     to: '/suppliers'
   },
   {
-    label: 'المشتريات',
-    icon: 'i-lucide-shopping-cart',
-    to: '/purchases'
-  },
-  {
-    label: 'التحويلات',
-    icon: 'i-lucide-banknote',
-    to: '/cash-transfers'
-  },
-  {
-    label: 'التسليمات',
-    icon: 'i-lucide-truck',
-    to: '/deliveries'
-  },
-  {
     label: 'الشون',
     icon: 'i-lucide-warehouse',
     to: '/warehouses'
+  },
+  {
+    label: 'المخازن',
+    icon: 'i-lucide-package',
+    to: '/stores'
+  },
+  {
+    label: 'المقالي',
+    icon: 'i-lucide-flame',
+    to: '/meklas'
+  },
+  {
+    label: 'العملاء',
+    icon: 'i-lucide-user-round',
+    to: '/clients'
   },
   {
     label: 'المواسم',

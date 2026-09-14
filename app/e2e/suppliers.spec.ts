@@ -33,8 +33,10 @@ test.describe('suppliers', () => {
       createdId = await idFromInsertResponse(createResponse)
 
       await expect(dialog).toBeHidden({ timeout: 20_000 })
-      await page.getByPlaceholder('بحث بالاسم...').fill(name)
-      await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 20_000 })
+      await fillControl(page.getByPlaceholder('بحث بالاسم...'), name)
+      await expect(page.getByRole('row').filter({ hasText: name })).toBeVisible({
+        timeout: 20_000
+      })
     } finally {
       await cleanupCreatedRow(request, 'suppliers', {
         id: createdId,

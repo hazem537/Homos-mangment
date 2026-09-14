@@ -42,6 +42,8 @@ const {
   computedPurchaseArdab,
   computedPurchaseTotal,
   warehouseOptions,
+  sectionOptions,
+  onDeliveryWarehouseChange,
   transferKindOptions,
   supplierAccountTypeOptions,
   transferKindLabel,
@@ -82,39 +84,34 @@ const {
   nolonRatePerTon
 } = useSupplierDetail(() => props.supplierId)
 
-const cellInputUi = { base: 'px-1.5 py-1 text-sm rounded-sm tabular-nums text-end' }
+const cellInputUi = { base: 'px-1.5 py-1.5 text-base rounded-sm tabular-nums text-end' }
 /** Shared body row height so empty pads match data rows */
-const ledgerRowClass = 'h-12'
+const ledgerRowClass = 'h-14'
 /** Panel title bar (المشتريات / التحويلات / التسليمات) */
 const ledgerPanelHeaderClass =
-  'flex h-11 shrink-0 items-center gap-2 whitespace-nowrap border-b border-default bg-elevated/80 px-3'
+  'flex h-12 shrink-0 items-center gap-2.5 whitespace-nowrap border-b border-default bg-gradient-to-b from-elevated to-elevated/70 px-3.5'
+/** Outer frame for each of the three ledger tables */
+const ledgerPanelClass =
+  'flex h-full min-h-0 w-max shrink-0 flex-col overflow-hidden border-e-2 border-default bg-default last:border-e-0'
+/** Title text inside each ledger panel */
+const ledgerPanelTitleClass =
+  'text-[0.95rem] font-semibold tracking-wide text-highlighted'
+/** Scroll areas (vertical panels + horizontal ledger strip) */
+const ledgerScrollClass = 'homos-scroll'
+/** Shared table typography for all three ledgers */
+const ledgerTableClass =
+  'h-full w-max border-collapse text-base text-center whitespace-nowrap tabular-nums'
 /** Table column header cells — same height across all three ledgers */
-const ledgerThClass = 'h-10 p-2 font-medium align-middle'
+const ledgerThClass =
+  'h-11 border-e border-default/50 p-2.5 text-base font-medium align-middle last:border-e-0'
+/** Empty grid cells that fill leftover height above totals */
+const ledgerFillTdClass =
+  'h-full min-h-12 border-t border-e border-default/40 bg-elevated/20 p-0 last:border-e-0'
+/** Totals cells — same columns as body, frozen at bottom */
+const ledgerTotalTdClass =
+  'border-t-2 border-e border-default bg-elevated p-2.5 text-base last:border-e-0'
 /** Compact padding for supplier header stats cards (override Card default p-4 sm:p-6) */
 const statsCardUi = { body: 'p-2 sm:p-2.5' }
-
-/** Pad shorter tables with empty rows so all three end on the same line before totals */
-const purchaseBodyCount = computed(
-  () => purchases.value.length + (isPurchaseCreating.value ? 1 : 0)
-)
-const transferBodyCount = computed(
-  () => transfers.value.length + (isTransferCreating.value ? 1 : 0)
-)
-const deliveryBodyCount = computed(
-  () => deliveries.value.length + (isDeliveryCreating.value ? 1 : 0)
-)
-const ledgerRowTarget = computed(() =>
-  Math.max(purchaseBodyCount.value, transferBodyCount.value, deliveryBodyCount.value, 0)
-)
-const purchasePadRows = computed(() =>
-  Math.max(0, ledgerRowTarget.value - purchaseBodyCount.value)
-)
-const transferPadRows = computed(() =>
-  Math.max(0, ledgerRowTarget.value - transferBodyCount.value)
-)
-const deliveryPadRows = computed(() =>
-  Math.max(0, ledgerRowTarget.value - deliveryBodyCount.value)
-)
 
 const onPurchaseKey = (e: KeyboardEvent) => {
   if (e.key === 'Enter') {
@@ -145,8 +142,8 @@ const onDeliveryKey = (e: KeyboardEvent) => {
 </script>
 
 <template>
-  <div class="space-y-4 py-4">
-    <div class="flex flex-wrap items-center justify-between gap-3">
+  <div class="flex h-[calc(100dvh-3.5rem-3rem)] min-h-0 flex-col gap-4">
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
       <div class="flex min-w-0 items-center gap-2">
         <UButton
           to="/suppliers"
@@ -158,19 +155,19 @@ const onDeliveryKey = (e: KeyboardEvent) => {
         />
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <h2 class="text-xl font-semibold text-highlighted truncate">
+            <h2 class="truncate text-2xl font-semibold tracking-tight text-highlighted">
               {{ supplier?.name || 'كشف المورد' }}
             </h2>
             <UBadge
               v-if="supplier"
               variant="subtle"
               size="sm"
-              color="neutral"
+              color="warning"
             >
               {{ supplierAccountTypeLabel(supplier.account_type) }}
             </UBadge>
           </div>
-          <p v-if="supplier?.notes" class="text-muted text-sm mt-0.5 truncate">
+          <p v-if="supplier?.notes" class="mt-1 truncate text-sm text-muted">
             {{ supplier.notes }}
           </p>
         </div>
@@ -201,13 +198,14 @@ const onDeliveryKey = (e: KeyboardEvent) => {
     </template>
 
     <template v-else>
-      <div v-if="!activeSeason" class="rounded-lg bg-elevated/60 p-3 text-muted text-center text-sm">
+      <div class="flex min-h-0 flex-1 flex-col gap-4">
+      <div v-if="!activeSeason" class="shrink-0 rounded-lg bg-elevated/60 p-3 text-muted text-center text-sm">
         لا يوجد موسم نشط — فعّل موسماً من شاشة المواسم أولاً.
       </div>
 
       <div
         v-if="activeSeason"
-        class="overflow-x-auto tabular-nums py-2"
+        class="shrink-0 overflow-x-auto tabular-nums py-1"
       >
         <div class="flex flex-nowrap items-stretch gap-x-6">
           <!-- Group 1: quantities -->
@@ -310,14 +308,15 @@ const onDeliveryKey = (e: KeyboardEvent) => {
         </div>
       </div>
 
-      <!-- Excel-style ledger: scroll sideways across sections -->
+      <!-- Excel-style ledger: fill remaining height; scroll Y per panel, X across panels -->
       <div
         v-if="activeSeason"
-        class="overflow-x-auto overscroll-x-contain rounded-lg border border-default bg-default"
+        class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border-2 border-default bg-default"
       >
-          <div class="flex min-w-max items-start divide-x divide-default rtl:divide-x-reverse">
+        <div :class="['flex min-h-0 flex-1 overflow-x-auto overscroll-x-contain', ledgerScrollClass]">
+          <div class="flex h-full min-h-0 w-max min-w-full items-stretch">
           <!-- Purchases panel -->
-          <section class="w-max max-w-none shrink-0 flex flex-col">
+          <section :class="ledgerPanelClass">
             <div :class="ledgerPanelHeaderClass">
               <UButton
                 icon="i-lucide-plus"
@@ -327,18 +326,19 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                 :disabled="!activeSeason || isPurchaseCreating"
                 @click="openPurchaseCreate"
               />
-              <div class="flex items-center gap-2">
-                <p class="text-sm font-semibold text-highlighted">
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="h-4 w-1 shrink-0 rounded-full bg-warning" />
+                <p :class="ledgerPanelTitleClass">
                   المشتريات
                 </p>
-                <UBadge size="sm" variant="subtle" color="neutral">
+                <UBadge size="sm" variant="subtle" color="warning">
                   {{ purchases.length }}
                 </UBadge>
               </div>
             </div>
-            <div class="max-h-[min(70vh,36rem)] overflow-auto">
-              <table dir="rtl" class="w-max text-sm text-center whitespace-nowrap tabular-nums">
-                <thead class="sticky top-0 z-1 bg-elevated text-muted shadow-sm">
+            <div :class="['min-h-0 flex-1 overflow-y-auto overflow-x-hidden', ledgerScrollClass]">
+              <table dir="rtl" :class="ledgerTableClass">
+                <thead class="sticky top-0 z-[2] bg-elevated text-muted shadow-sm">
                   <tr>
                     <th :class="ledgerThClass">
                       التاريخ
@@ -525,52 +525,66 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </tr>
                   </template>
 
-                  <tr
-                    v-for="n in purchasePadRows"
-                    :key="`purchase-pad-${n}`"
-                    :class="['border-t border-default/60', ledgerRowClass]"
-                  >
-                    <td class="p-2 align-middle">&nbsp;</td>
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                  </tr>
-
-                  <tr v-if="!purchases.length && !isPurchaseCreating && !purchasePadRows">
-                    <td colspan="7" class="p-6 text-center text-muted">
+                  <tr v-if="!purchases.length && !isPurchaseCreating">
+                    <td colspan="7" class="border-t border-default p-6 text-center text-muted">
                       لا توجد مشتريات — اضغط +
                     </td>
                   </tr>
 
-                  <tr class="border-t-2 border-default bg-elevated font-semibold">
-                    <td class="p-2 text-muted">
-                      الإجمالي
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatNumber(purchaseTotals.kg) }}
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatNumber(purchaseTotals.ardab) }}
-                    </td>
-                    <td class="p-2" />
-                    <td class="p-2 tabular-nums text-end" dir="ltr" title="متوسط السعر الكلي">
-                      {{ formatMoney(purchaseTotals.avgPrice) }}
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(purchaseTotals.price) }}
-                    </td>
-                    <td class="p-2" />
+                  <!-- Empty bordered grid filling leftover height -->
+                  <tr class="h-full" aria-hidden="true">
+                    <td
+                      v-for="i in 7"
+                      :key="`purchase-fill-${i}`"
+                      :class="ledgerFillTdClass"
+                    />
                   </tr>
                 </tbody>
+                <tfoot class="sticky bottom-0 z-[2]">
+                  <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
+                    <td :class="[ledgerTotalTdClass, 'text-muted']">
+                      <UTooltip text="صف مجاميع المشتريات لهذا المورد في الموسم النشط">
+                        <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع كميات المشتريات بالكجم">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatNumber(purchaseTotals.kg) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع الأردب = كجم ÷ معامل الأردب">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatNumber(purchaseTotals.ardab) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="ledgerTotalTdClass" />
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="متوسط سعر الأردب المرجح لكل المشتريات">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatMoney(purchaseTotals.avgPrice) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع قيمة المشتريات بالجنيه">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatMoney(purchaseTotals.price) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="ledgerTotalTdClass" />
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </section>
 
           <!-- Transfers / payments panel -->
-          <section class="w-max max-w-none shrink-0 flex flex-col">
+          <section :class="ledgerPanelClass">
             <div :class="ledgerPanelHeaderClass">
               <UButton
                 icon="i-lucide-plus"
@@ -580,18 +594,19 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                 :disabled="!activeSeason || !canAddTransfer || isTransferCreating"
                 @click="openTransferCreate"
               />
-              <div class="flex items-center gap-2">
-                <p class="text-sm font-semibold text-highlighted">
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="h-4 w-1 shrink-0 rounded-full bg-warning" />
+                <p :class="ledgerPanelTitleClass">
                   التحويلات
                 </p>
-                <UBadge size="sm" variant="subtle" color="neutral">
+                <UBadge size="sm" variant="subtle" color="warning">
                   {{ transfers.length }}
                 </UBadge>
               </div>
             </div>
-            <div class="max-h-[min(70vh,36rem)] overflow-auto">
-              <table dir="rtl" class="w-max text-sm text-center whitespace-nowrap tabular-nums">
-                <thead class="sticky top-0 z-1 bg-elevated text-muted shadow-sm">
+            <div :class="['min-h-0 flex-1 overflow-y-auto overflow-x-hidden', ledgerScrollClass]">
+              <table dir="rtl" :class="ledgerTableClass">
+                <thead class="sticky top-0 z-[2] bg-elevated text-muted shadow-sm">
                   <tr>
                     <th :class="ledgerThClass">
                       التاريخ
@@ -776,44 +791,51 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </tr>
                   </template>
 
-                  <tr
-                    v-for="n in transferPadRows"
-                    :key="`transfer-pad-${n}`"
-                    :class="['border-t border-default/60', ledgerRowClass]"
-                  >
-                    <td class="p-2 align-middle">&nbsp;</td>
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                  </tr>
-
-                  <tr v-if="!transfers.length && !isTransferCreating && !transferPadRows">
-                    <td colspan="5" class="p-6 text-center text-muted">
+                  <tr v-if="!transfers.length && !isTransferCreating">
+                    <td colspan="5" class="border-t border-default p-6 text-center text-muted">
                       لا توجد تحويلات
                     </td>
                   </tr>
 
-                  <tr class="border-t-2 border-default bg-elevated font-semibold">
-                    <td class="p-2 text-muted">
-                      الإجمالي
-                    </td>
-                    <td class="p-2 text-muted">
-                      {{ transferTotals.count }}
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(transferTotals.amount) }}
-                    </td>
-                    <td class="p-2" />
-                    <td class="p-2" />
+                  <tr class="h-full" aria-hidden="true">
+                    <td
+                      v-for="i in 5"
+                      :key="`transfer-fill-${i}`"
+                      :class="ledgerFillTdClass"
+                    />
                   </tr>
                 </tbody>
+                <tfoot class="sticky bottom-0 z-[2]">
+                  <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
+                    <td :class="[ledgerTotalTdClass, 'text-muted']">
+                      <UTooltip text="صف مجاميع التحويلات لهذا المورد في الموسم النشط">
+                        <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'text-muted']">
+                      <UTooltip text="عدد التحويلات المسجّلة">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ transferTotals.count }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع مبالغ التحويلات والعمولة بالجنيه">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatMoney(transferTotals.amount) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="ledgerTotalTdClass" />
+                    <td :class="ledgerTotalTdClass" />
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </section>
 
           <!-- Deliveries panel -->
-          <section class="w-max max-w-none shrink-0 flex flex-col">
+          <section :class="ledgerPanelClass">
             <div :class="ledgerPanelHeaderClass">
               <UButton
                 icon="i-lucide-plus"
@@ -823,25 +845,28 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                 :disabled="!activeSeason || !canAddDelivery || isDeliveryCreating"
                 @click="openDeliveryCreate"
               />
-              <div class="flex items-center gap-2">
-                <p class="text-sm font-semibold text-highlighted">
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="h-4 w-1 shrink-0 rounded-full bg-warning" />
+                <p :class="ledgerPanelTitleClass">
                   التسليمات
                 </p>
-                <UBadge size="sm" variant="subtle" color="neutral">
+                <UBadge size="sm" variant="subtle" color="warning">
                   {{ deliveries.length }}
                 </UBadge>
               </div>
             </div>
-            <div class="max-h-[min(70vh,36rem)] overflow-auto">
-              <table dir="rtl" class="w-max text-sm text-center whitespace-nowrap tabular-nums">
-                <thead class="sticky top-0 z-1 bg-elevated text-muted shadow-sm">
+            <div :class="['min-h-0 flex-1 overflow-y-auto overflow-x-hidden', ledgerScrollClass]">
+              <table dir="rtl" :class="ledgerTableClass">
+                <thead class="sticky top-0 z-[2] bg-elevated text-muted shadow-sm">
                   <tr>
-                    <th :class="ledgerThClass" />
                     <th :class="ledgerThClass">
                       التاريخ
                     </th>
                     <th :class="ledgerThClass">
                       الشونة
+                    </th>
+                    <th :class="ledgerThClass">
+                      الربع
                     </th>
                     <th :class="ledgerThClass" title="كجم مطلوب قبل هذه النقلة">
                       مطلوب قبل
@@ -879,7 +904,6 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     class="border-t border-primary/30 bg-primary/5"
                     @keydown="onDeliveryKey"
                   >
-                    <td class="p-1" />
                     <td class="p-1">
                       <UInput
                         v-model="deliveryForm.delivery_date"
@@ -898,6 +922,18 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                         label-key="label"
                         size="sm"
                         class="w-32"
+                        @update:model-value="onDeliveryWarehouseChange"
+                      />
+                    </td>
+                    <td class="p-1">
+                      <USelect
+                        v-model="deliveryForm.section_id"
+                        :items="sectionOptions"
+                        value-key="value"
+                        label-key="label"
+                        size="sm"
+                        class="w-28"
+                        placeholder="الربع"
                       />
                     </td>
                     <td class="p-1.5 tabular-nums text-end" dir="ltr">
@@ -994,7 +1030,6 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                       class="border-t border-primary/30 bg-primary/5"
                       @keydown="onDeliveryKey"
                     >
-                      <td class="p-1" />
                       <td class="p-1">
                         <UInput
                           v-model="deliveryForm.delivery_date"
@@ -1013,6 +1048,18 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                           label-key="label"
                           size="sm"
                           class="w-32"
+                          @update:model-value="onDeliveryWarehouseChange"
+                        />
+                      </td>
+                      <td class="p-1">
+                        <USelect
+                          v-model="deliveryForm.section_id"
+                          :items="sectionOptions"
+                          value-key="value"
+                          label-key="label"
+                          size="sm"
+                          class="w-28"
+                          placeholder="الربع"
                         />
                       </td>
                       <td class="p-1.5 tabular-nums text-end" dir="ltr">
@@ -1101,12 +1148,14 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </tr>
                     <template v-else>
                       <tr :class="['border-t border-default hover:bg-elevated/40', ledgerRowClass]">
-                        <td class="p-1 align-middle" />
                         <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
                           {{ row.delivery_date }}
                         </td>
                         <td class="p-2 align-middle">
                           {{ row.warehouses?.name || '—' }}
+                        </td>
+                        <td class="p-2 align-middle">
+                          {{ row.warehouse_sections?.name || '—' }}
                         </td>
                         <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
                           {{ formatNumber(deliveryKgRunningOf(row.id).before) }}
@@ -1176,74 +1225,89 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </template>
                   </template>
 
-                  <tr
-                    v-for="n in deliveryPadRows"
-                    :key="`delivery-pad-${n}`"
-                    :class="['border-t border-default/60', ledgerRowClass]"
-                  >
-                    <td class="p-2 align-middle">&nbsp;</td>
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                    <td class="p-2 align-middle" />
-                  </tr>
-
-                  <tr v-if="!deliveries.length && !isDeliveryCreating && !deliveryPadRows">
-                    <td colspan="13" class="p-6 text-center text-muted">
+                  <tr v-if="!deliveries.length && !isDeliveryCreating">
+                    <td colspan="13" class="border-t border-default p-6 text-center text-muted">
                       لا توجد تسليمات
                     </td>
                   </tr>
 
-                  <tr class="border-t-2 border-default bg-elevated font-semibold">
-                    <td class="p-2" />
-                    <td class="p-2 text-muted">
-                      الإجمالي
-                    </td>
-                    <td class="p-2" />
-                    <td class="p-2" />
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatNumber(deliveryTotals.kg) }}
-                    </td>
+                  <tr class="h-full" aria-hidden="true">
                     <td
-                      class="p-2 tabular-nums text-end"
-                      dir="ltr"
-                      title="المتبقي من كجم المشتريات بعد كل التسليمات"
-                    >
-                      {{ formatNumber(deliveryKgRemainingFinal) }}
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(deliveryTotals.nolon) }}
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(deliveryTotals.nathriyat) }}
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(deliveryTotals.costTotal) }}
-                    </td>
-                    <td class="p-2 tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(deliveryTotals.costPaid) }}
-                    </td>
-                    <td class="p-2">
-                      <UBadge size="sm" :color="signedTone(deliveryTotals.costNeeded)" variant="subtle">
-                        <span dir="ltr">{{ formatMoney(deliveryTotals.costNeeded) }}</span>
-                      </UBadge>
-                    </td>
-                    <td class="p-2" />
-                    <td class="p-2" />
+                      v-for="i in 13"
+                      :key="`delivery-fill-${i}`"
+                      :class="ledgerFillTdClass"
+                    />
                   </tr>
                 </tbody>
+                <tfoot class="sticky bottom-0 z-[2]">
+                  <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
+                    <td :class="[ledgerTotalTdClass, 'text-muted']">
+                      <UTooltip text="صف مجاميع التسليمات لهذا المورد في الموسم النشط">
+                        <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
+                      </UTooltip>
+                    </td>
+                    <td :class="ledgerTotalTdClass" />
+                    <td :class="ledgerTotalTdClass" />
+                    <td :class="ledgerTotalTdClass" />
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع الكميات المستلمة بالكجم">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatNumber(deliveryTotals.kg) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="المتبقي من كجم المشتريات بعد كل التسليمات">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatNumber(deliveryKgRemainingFinal) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع نولون كل التسليمات">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatMoney(deliveryTotals.nolon) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع نثريات كل التسليمات">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatMoney(deliveryTotals.nathriyat) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="إجمالي تكاليف التسليم = نولون + نثريات">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatMoney(deliveryTotals.costTotal) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
+                      <UTooltip text="مجموع المدفوع من نولون ونثريات">
+                        <span class="cursor-help border-b border-dotted border-muted">
+                          {{ formatMoney(deliveryTotals.costPaid) }}
+                        </span>
+                      </UTooltip>
+                    </td>
+                    <td :class="ledgerTotalTdClass">
+                      <UTooltip text="المتبقي للدفع = إجمالي التكاليف − المدفوع">
+                        <UBadge size="sm" :color="signedTone(deliveryTotals.costNeeded)" variant="subtle" class="cursor-help">
+                          <span dir="ltr">{{ formatMoney(deliveryTotals.costNeeded) }}</span>
+                        </UBadge>
+                      </UTooltip>
+                    </td>
+                    <td :class="ledgerTotalTdClass" />
+                    <td :class="ledgerTotalTdClass" />
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </section>
+          </div>
         </div>
+      </div>
       </div>
     </template>
 

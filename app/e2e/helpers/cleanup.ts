@@ -1,6 +1,17 @@
 import type { APIRequestContext, Page, Response } from '@playwright/test'
 
-type Table = 'suppliers' | 'warehouses' | 'seasons' | 'purchases' | 'cash_transfers' | 'warehouse_deliveries'
+type Table =
+  | 'suppliers'
+  | 'warehouses'
+  | 'warehouse_sections'
+  | 'seasons'
+  | 'purchases'
+  | 'cash_transfers'
+  | 'warehouse_deliveries'
+  | 'stores'
+  | 'meklas'
+  | 'clients'
+  | 'stock_movements'
 
 function supabaseConfig() {
   const url = process.env.NUXT_PUBLIC_SUPABASE_URL || process.env.E2E_SUPABASE_URL
@@ -192,12 +203,20 @@ export async function cleanupCreatedRow(
 /** Wipe leftover e2e rows (safe patterns only). Needs service role or a user token. */
 export async function cleanupE2eLeftovers(request: APIRequestContext, accessToken: string) {
   await deleteByFilter(request, 'purchases', `notes=like.${encodeURIComponent('*purchase-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'purchases', `notes=like.${encodeURIComponent('*ledger-purchase-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'cash_transfers', `notes=like.${encodeURIComponent('*transfer-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'stock_movements', `notes=like.${encodeURIComponent('*e2e*')}`, accessToken)
   await deleteByFilter(request, 'warehouse_deliveries', `notes=like.${encodeURIComponent('*delivery-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'suppliers', `name=like.${encodeURIComponent('*مورد-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'suppliers', `name=like.${encodeURIComponent('*مورد-كشف-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'suppliers', `name=like.${encodeURIComponent('*00-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'warehouse_sections', `name=like.${encodeURIComponent('*ربع-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'warehouses', `name=like.${encodeURIComponent('*شونة-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'warehouses', `name=like.${encodeURIComponent('*شونة-كشف-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'warehouses', `name=like.${encodeURIComponent('*00-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'stores', `name=like.${encodeURIComponent('*مخزن-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'meklas', `name=like.${encodeURIComponent('*مقلى-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'clients', `name=like.${encodeURIComponent('*عميل-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'seasons', `name=like.${encodeURIComponent('*موسم اختبار*')}`, accessToken)
   await deleteByFilter(request, 'seasons', 'year=gte.2100', accessToken)
 }

@@ -19,6 +19,7 @@ export type WarehouseDelivery = Database['public']['Tables']['warehouse_deliveri
 type SeasonLite = { id: string, name: string, ardab_factor: number }
 type SupplierLite = { id: string, name: string }
 type WarehouseLite = { id: string, name: string }
+type SectionLite = { id: string, name: string, warehouse_id: string }
 type DeliveryMoneyField =
   | 'quantity_kg'
   | 'nolon_total'
@@ -47,6 +48,7 @@ export function useDeliveries() {
   const costPayments = ref<DeliveryCostPaymentLite[]>([])
   const suppliers = ref<SupplierLite[]>([])
   const warehouses = ref<WarehouseLite[]>([])
+  const sections = ref<SectionLite[]>([])
   const activeSeason = ref<SeasonLite | null>(null)
   const search = ref('')
   const modalOpen = ref(false)
@@ -65,6 +67,7 @@ export function useDeliveries() {
   const form = reactive({
     supplier_id: '' as string,
     warehouse_id: '' as string,
+    section_id: '' as string,
     delivery_date: todayIsoDate(),
     quantity_kg: '' as string,
     nolon_total: '' as string,
@@ -90,6 +93,23 @@ export function useDeliveries() {
   const warehouseOptions = computed(() =>
     warehouses.value.map(w => ({ label: w.name, value: w.id }))
   )
+
+  const sectionOptions = computed(() =>
+    sections.value
+      .filter(s => s.warehouse_id === form.warehouse_id)
+      .map(s => ({ label: s.name, value: s.id }))
+  )
+
+  const syncSectionForWarehouse = () => {
+    const options = sectionOptions.value
+    if (!options.length) {
+      form.section_id = ''
+      return
+    }
+    if (!options.some(o => o.value === form.section_id)) {
+      form.section_id = options[0]?.value || ''
+    }
+  }
 
   const filtered = computed(() => {
     const q = search.value.trim()
@@ -151,17 +171,20 @@ export function useDeliveries() {
   })
 
   const loadLookups = async () => {
-    const [seasonRes, suppliersRes, warehousesRes] = await Promise.all([
+    const [seasonRes, suppliersRes, warehousesRes, sectionsRes] = await Promise.all([
       client.from('seasons').select('id, name, ardab_factor').eq('is_active', true).maybeSingle(),
       client.from('suppliers').select('id, name').eq('is_active', true).order('name'),
-      client.from('warehouses').select('id, name').eq('is_active', true).order('name')
+      client.from('warehouses').select('id, name').eq('is_active', true).order('name'),
+      client.from('warehouse_sections').select('id, name, warehouse_id').eq('is_active', true).order('name')
     ])
     if (seasonRes.error) throw seasonRes.error
     if (suppliersRes.error) throw suppliersRes.error
     if (warehousesRes.error) throw warehousesRes.error
+    if (sectionsRes.error) throw sectionsRes.error
     activeSeason.value = seasonRes.data
     suppliers.value = suppliersRes.data ?? []
     warehouses.value = warehousesRes.data ?? []
+    sections.value = sectionsRes.data ?? []
   }
 
   const loadPaymentsForDeliveries = async (deliveryIds: string[]) => {
@@ -222,6 +245,7 @@ export function useDeliveries() {
     editing.value = null
     form.supplier_id = suppliers.value[0]?.id || ''
     form.warehouse_id = warehouses.value[0]?.id || ''
+    syncSectionForWarehouse()
     form.delivery_date = todayIsoDate()
     form.quantity_kg = ''
     form.nolon_total = ''
@@ -238,6 +262,8 @@ export function useDeliveries() {
     editing.value = row
     form.supplier_id = row.supplier_id
     form.warehouse_id = row.warehouse_id
+    form.section_id = row.section_id
+    syncSectionForWarehouse()
     form.delivery_date = row.delivery_date
     form.quantity_kg = String(row.quantity_kg)
     form.nolon_total = String(row.nolon_total ?? 0)
@@ -344,6 +370,10 @@ export function useDeliveries() {
       toast.add({ title: 'اختر الشونة', color: 'warning' })
       return
     }
+    if (!form.section_id) {
+      toast.add({ title: 'اختر الربع', color: 'warning' })
+      return
+    }
     if (!form.delivery_date) {
       toast.add({ title: 'التاريخ مطلوب', color: 'warning' })
       return
@@ -374,6 +404,7 @@ export function useDeliveries() {
       season_id: activeSeason.value.id,
       supplier_id: form.supplier_id,
       warehouse_id: form.warehouse_id,
+      section_id: form.section_id,
       delivery_date: form.delivery_date,
       quantity_kg: quantityKg,
       ardab: computedArdab.value,

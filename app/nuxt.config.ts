@@ -28,6 +28,9 @@ export default defineNuxtConfig({
     { path: '~/features/cash-transfers/components', pathPrefix: false },
     { path: '~/features/deliveries/components', pathPrefix: false },
     { path: '~/features/warehouses/components', pathPrefix: false },
+    { path: '~/features/stores/components', pathPrefix: false },
+    { path: '~/features/meklas/components', pathPrefix: false },
+    { path: '~/features/clients/components', pathPrefix: false },
     { path: '~/features/seasons/components', pathPrefix: false }
   ],
 

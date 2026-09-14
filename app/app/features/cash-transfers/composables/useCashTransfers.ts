@@ -216,6 +216,26 @@ export function useCashTransfers() {
       return
     }
 
+    // تحويل: cannot exceed remaining purchase due for this supplier
+    if (form.kind === 'transfer') {
+      if (supplierDue.value == null) {
+        await loadSupplierDue(form.supplier_id)
+      }
+      let maxAllowed = Number(supplierDue.value ?? 0)
+      if (editing.value && editing.value.kind !== 'commission') {
+        maxAllowed += Number(editing.value.amount)
+      }
+      maxAllowed = Number(maxAllowed.toFixed(2))
+      if (amount > maxAllowed + 0.001) {
+        toast.add({
+          title: 'المبلغ أكبر من المستحق',
+          description: `المتبقي المتاح: ${maxAllowed.toFixed(2)} جنيه`,
+          color: 'warning'
+        })
+        return
+      }
+    }
+
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: form.supplier_id,

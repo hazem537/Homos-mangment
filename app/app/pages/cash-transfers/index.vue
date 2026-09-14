@@ -1,3 +1,7 @@
+<script setup lang="ts">
+await navigateTo('/suppliers')
+</script>
+
 <template>
-  <CashTransfersPage />
+  <div />
 </template>

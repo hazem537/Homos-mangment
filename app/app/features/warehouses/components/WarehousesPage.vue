@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { formatNumber } from '~/utils/formatNumber'
 
 const {
@@ -30,8 +30,8 @@ const {
         </p>
       </div>
       <div class="flex gap-2">
-        <UButton to="/deliveries" variant="outline" icon="i-lucide-truck">
-          التسليمات
+        <UButton to="/suppliers" variant="outline" icon="i-lucide-users">
+          الموردون
         </UButton>
         <UButton icon="i-lucide-plus" @click="openCreate">
           إضافة شونة
@@ -75,7 +75,12 @@ const {
               class="border-t border-default"
             >
               <td class="p-3 font-medium">
-                {{ row.warehouse_name }}
+                <NuxtLink
+                  :to="`/warehouses/${row.warehouse_id}`"
+                  class="text-highlighted hover:underline"
+                >
+                  {{ row.warehouse_name }}
+                </NuxtLink>
                 <p v-if="row.notes" class="text-xs text-muted font-normal mt-0.5">
                   {{ row.notes }}
                 </p>
@@ -88,6 +93,12 @@ const {
               </td>
               <td class="p-3">
                 <div class="flex justify-center gap-1">
+                  <UButton
+                    size="sm"
+                    variant="ghost"
+                    icon="i-lucide-eye"
+                    :to="`/warehouses/${row.warehouse_id}`"
+                  />
                   <UButton
                     size="sm"
                     variant="ghost"

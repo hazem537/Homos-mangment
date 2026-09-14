@@ -10,6 +10,7 @@ export type AppRole = 'admin' | 'accountant' | 'warehouse'
 export type TransferKind = 'transfer' | 'settlement' | 'other' | 'commission'
 export type SupplierAccountType = 'normal' | 'investment' | 'company'
 export type DeliveryCostKind = 'nolon' | 'nathriyat'
+export type StockLocationKind = 'section' | 'store' | 'mekla' | 'client'
 
 export type Database = {
   public: {
@@ -242,11 +243,184 @@ export type Database = {
           }
         ]
       }
+      warehouse_sections: {
+        Row: {
+          id: string
+          warehouse_id: string
+          name: string
+          notes: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          warehouse_id: string
+          name: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          name?: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'warehouse_sections_warehouse_id_fkey'
+            columns: ['warehouse_id']
+            isOneToOne: false
+            referencedRelation: 'warehouses'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      stores: {
+        Row: {
+          id: string
+          name: string
+          notes: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      meklas: {
+        Row: {
+          id: string
+          name: string
+          notes: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      clients: {
+        Row: {
+          id: string
+          name: string
+          notes: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      stock_movements: {
+        Row: {
+          id: string
+          season_id: string
+          movement_date: string
+          quantity_kg: number
+          from_kind: StockLocationKind
+          from_id: string
+          to_kind: StockLocationKind
+          to_id: string
+          notes: string | null
+          is_cancelled: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          season_id: string
+          movement_date?: string
+          quantity_kg: number
+          from_kind: StockLocationKind
+          from_id: string
+          to_kind: StockLocationKind
+          to_id: string
+          notes?: string | null
+          is_cancelled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          season_id?: string
+          movement_date?: string
+          quantity_kg?: number
+          from_kind?: StockLocationKind
+          from_id?: string
+          to_kind?: StockLocationKind
+          to_id?: string
+          notes?: string | null
+          is_cancelled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'stock_movements_season_id_fkey'
+            columns: ['season_id']
+            isOneToOne: false
+            referencedRelation: 'seasons'
+            referencedColumns: ['id']
+          }
+        ]
+      }
       warehouse_deliveries: {
         Row: {
           id: string
           season_id: string
           warehouse_id: string
+          section_id: string
           supplier_id: string
           delivery_date: string
           quantity_kg: number
@@ -263,6 +437,7 @@ export type Database = {
           id?: string
           season_id: string
           warehouse_id: string
+          section_id: string
           supplier_id: string
           delivery_date?: string
           quantity_kg: number
@@ -279,6 +454,7 @@ export type Database = {
           id?: string
           season_id?: string
           warehouse_id?: string
+          section_id?: string
           supplier_id?: string
           delivery_date?: string
           quantity_kg?: number
@@ -304,6 +480,13 @@ export type Database = {
             columns: ['warehouse_id']
             isOneToOne: false
             referencedRelation: 'warehouses'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'warehouse_deliveries_section_id_fkey'
+            columns: ['section_id']
+            isOneToOne: false
+            referencedRelation: 'warehouse_sections'
             referencedColumns: ['id']
           },
           {
@@ -409,6 +592,53 @@ export type Database = {
           ardab_total: number
         }[]
       }
+      section_balances: {
+        Args: {
+          p_warehouse_id: string
+          p_season_id?: string | null
+        }
+        Returns: {
+          section_id: string
+          section_name: string
+          notes: string | null
+          is_active: boolean
+          kg_in: number
+          kg_out: number
+          kg_remaining: number
+        }[]
+      }
+      store_balances: {
+        Args: {
+          p_season_id?: string | null
+        }
+        Returns: {
+          store_id: string
+          store_name: string
+          notes: string | null
+          is_active: boolean
+          kg_total: number
+        }[]
+      }
+      mekla_balances: {
+        Args: {
+          p_season_id?: string | null
+        }
+        Returns: {
+          mekla_id: string
+          mekla_name: string
+          notes: string | null
+          is_active: boolean
+          kg_total: number
+        }[]
+      }
+      location_remaining_kg: {
+        Args: {
+          p_kind: StockLocationKind
+          p_id: string
+          p_season_id?: string | null
+        }
+        Returns: number
+      }
       supplier_balances: {
         Args: {
           p_season_id?: string | null
@@ -452,6 +682,7 @@ export type Database = {
       transfer_kind: TransferKind
       supplier_account_type: SupplierAccountType
       delivery_cost_kind: DeliveryCostKind
+      stock_location_kind: StockLocationKind
     }
     CompositeTypes: {
       [_ in never]: never
