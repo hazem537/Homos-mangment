@@ -21,7 +21,10 @@ export function useMeklas() {
     const q = search.value.trim()
     if (!q) return meklas.value
     return meklas.value.filter(m =>
-      m.mekla_name.includes(q) || (m.notes || '').includes(q)
+      m.mekla_name.includes(q)
+      || (m.product_name || '').includes(q)
+      || (m.status_name || '').includes(q)
+      || (m.notes || '').includes(q)
     )
   })
 
@@ -87,7 +90,10 @@ export function useMeklas() {
   }
 
   const softDelete = async (row: MeklaBalance) => {
-    if (Math.abs(Number(row.kg_total)) > 0.001) {
+    const kgTotal = meklas.value
+      .filter(m => m.mekla_id === row.mekla_id)
+      .reduce((sum, m) => sum + Number(m.kg_total), 0)
+    if (Math.abs(kgTotal) > 0.001) {
       toast.add({
         title: 'لا يمكن حذف المقلى',
         description: 'الرصيد يجب أن يكون صفراً تقريباً',
@@ -95,11 +101,13 @@ export function useMeklas() {
       })
       return
     }
-    const ok = await askConfirm(`حذف المقلى «${row.mekla_name}»؟`)
+    const ok = await askConfirm(`حذف المقلى «${row.mekla_name}» نهائياً؟`)
     if (!ok) return
     saving.value = true
     try {
-      const { error } = await client.from('meklas').update({ is_active: false }).eq('id', row.mekla_id)
+      await client.from('stock_movements').delete().eq('from_kind', 'mekla').eq('from_id', row.mekla_id)
+      await client.from('stock_movements').delete().eq('to_kind', 'mekla').eq('to_id', row.mekla_id)
+      const { error } = await client.from('meklas').delete().eq('id', row.mekla_id)
       if (error) throw error
       toast.add({ title: 'تم حذف المقلى', color: 'success' })
       await load()

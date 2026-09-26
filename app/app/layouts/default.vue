@@ -23,6 +23,16 @@ const links = [
     to: '/suppliers'
   },
   {
+    label: 'إحصائيات',
+    icon: 'i-lucide-chart-column',
+    to: '/supplier-stats'
+  },
+  {
+    label: 'أصناف الحمص',
+    icon: 'i-lucide-wheat',
+    to: '/products'
+  },
+  {
     label: 'الشون',
     icon: 'i-lucide-warehouse',
     to: '/warehouses'

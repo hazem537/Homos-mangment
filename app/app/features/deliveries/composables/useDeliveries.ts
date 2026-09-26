@@ -14,12 +14,17 @@ import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 export type WarehouseDelivery = Database['public']['Tables']['warehouse_deliveries']['Row'] & {
   suppliers?: { id: string, name: string } | null
   warehouses?: { id: string, name: string } | null
+  products?: { id: string, name: string } | null
+  stock_statuses?: { id: string, name: string } | null
 }
 
 type SeasonLite = { id: string, name: string, ardab_factor: number }
-type SupplierLite = { id: string, name: string }
-type WarehouseLite = { id: string, name: string }
+type SupplierLite = { id: string, name: string, account_type_id: string, account_type_name: string }
+type WarehouseLite = { id: string, name: string, account_type_id: string, account_type_name: string }
 type SectionLite = { id: string, name: string, warehouse_id: string }
+type ProductLite = { id: string, name: string }
+type StatusLite = { id: string, name: string, product_id: string }
+type PurchaseLite = { supplier_id: string, product_id: string, quantity_kg: number }
 type DeliveryMoneyField =
   | 'quantity_kg'
   | 'nolon_total'
@@ -49,6 +54,9 @@ export function useDeliveries() {
   const suppliers = ref<SupplierLite[]>([])
   const warehouses = ref<WarehouseLite[]>([])
   const sections = ref<SectionLite[]>([])
+  const products = ref<ProductLite[]>([])
+  const stockStatuses = ref<StatusLite[]>([])
+  const seasonPurchases = ref<PurchaseLite[]>([])
   const activeSeason = ref<SeasonLite | null>(null)
   const search = ref('')
   const modalOpen = ref(false)
@@ -68,6 +76,7 @@ export function useDeliveries() {
     supplier_id: '' as string,
     warehouse_id: '' as string,
     section_id: '' as string,
+    product_id: '' as string,
     delivery_date: todayIsoDate(),
     quantity_kg: '' as string,
     nolon_total: '' as string,
@@ -86,13 +95,145 @@ export function useDeliveries() {
     return kgToArdab(parseDecimal(form.quantity_kg), Number(factor))
   })
 
-  const supplierOptions = computed(() =>
-    suppliers.value.map(s => ({ label: s.name, value: s.id }))
-  )
+  const supplierOptions = computed(() => {
+    const warehouseType = warehouses.value.find(w => w.id === form.warehouse_id)?.account_type_id
+    return suppliers.value
+      .filter(s => !warehouseType || s.account_type_id === warehouseType)
+      .map(s => ({
+        label: s.account_type_name ? `${s.name} — ${s.account_type_name}` : s.name,
+        value: s.id
+      }))
+  })
 
-  const warehouseOptions = computed(() =>
-    warehouses.value.map(w => ({ label: w.name, value: w.id }))
-  )
+  const warehouseOptions = computed(() => {
+    const supplierType = suppliers.value.find(s => s.id === form.supplier_id)?.account_type_id
+    return warehouses.value
+      .filter(w => !supplierType || w.account_type_id === supplierType)
+      .map(w => ({
+        label: w.account_type_name ? `${w.name} — ${w.account_type_name}` : w.name,
+        value: w.id
+      }))
+  })
+
+  const syncWarehouseForSupplierType = () => {
+    const options = warehouseOptions.value
+    if (!options.length) {
+      form.warehouse_id = ''
+      syncSectionForWarehouse()
+      return
+    }
+    if (!options.some(o => o.value === form.warehouse_id)) {
+      form.warehouse_id = options[0]?.value || ''
+    }
+    syncSectionForWarehouse()
+  }
+
+  const syncSupplierForWarehouseType = () => {
+    const options = supplierOptions.value
+    if (!options.length) {
+      form.supplier_id = ''
+      return
+    }
+    if (!options.some(o => o.value === form.supplier_id)) {
+      form.supplier_id = options[0]?.value || ''
+    }
+  }
+
+  const productOptions = computed(() => {
+    const supplierId = form.supplier_id
+    if (!supplierId) return []
+    const purchasedIds = new Set(
+      seasonPurchases.value
+        .filter(p => p.supplier_id === supplierId)
+        .map(p => p.product_id)
+    )
+    return products.value
+      .filter(p => purchasedIds.has(p.id))
+      .map(p => ({ label: p.name, value: p.id }))
+  })
+
+  const reloadStatuses = async () => {
+    const { data, error } = await client
+      .from('stock_statuses')
+      .select('id, name, product_id')
+      .eq('is_active', true)
+      .order('name')
+    if (error) throw error
+    stockStatuses.value = data ?? []
+  }
+
+  /** Delivery no longer asks for status — use product default (بدون غربلة). */
+  const resolveStatusIdForProduct = async (productId: string) => {
+    if (!productId) return null
+    let forProduct = stockStatuses.value.filter(s => s.product_id === productId)
+    if (!forProduct.length) {
+      await client.from('stock_statuses').insert([
+        { product_id: productId, name: 'بدون غربلة', notes: 'الحالة الافتراضية' },
+        { product_id: productId, name: 'مغربل', notes: null }
+      ])
+      await reloadStatuses()
+      forProduct = stockStatuses.value.filter(s => s.product_id === productId)
+    }
+    const preferred = forProduct.find(s => s.name.trim() === 'بدون غربلة')
+    return preferred?.id || forProduct[0]?.id || null
+  }
+
+  const purchasedKgOf = (supplierId: string, productId: string) =>
+    seasonPurchases.value
+      .filter(p => p.supplier_id === supplierId && p.product_id === productId)
+      .reduce((sum, p) => sum + Number(p.quantity_kg), 0)
+
+  const deliveredKgOf = (
+    supplierId: string,
+    productId: string,
+    excludeDeliveryId?: string | null
+  ) =>
+    deliveries.value
+      .filter(d =>
+        d.supplier_id === supplierId
+        && d.product_id === productId
+        && (!excludeDeliveryId || d.id !== excludeDeliveryId)
+      )
+      .reduce((sum, d) => sum + Number(d.quantity_kg), 0)
+
+  const deliveryMaxKgAllowed = computed(() => {
+    if (!form.supplier_id || !form.product_id) return 0
+    const bought = purchasedKgOf(form.supplier_id, form.product_id)
+    const delivered = deliveredKgOf(
+      form.supplier_id,
+      form.product_id,
+      editing.value?.id
+    )
+    return Number((bought - delivered).toFixed(4))
+  })
+
+  const syncProductForSupplier = () => {
+    const options = productOptions.value
+    if (!options.length) {
+      form.product_id = ''
+      return
+    }
+    if (!options.some(o => o.value === form.product_id)) {
+      const withRemaining = options.find(
+        o =>
+          purchasedKgOf(form.supplier_id, o.value)
+          - deliveredKgOf(form.supplier_id, o.value, editing.value?.id)
+          > 0.001
+      )
+      form.product_id = withRemaining?.value || options[0]?.value || ''
+    }
+  }
+
+  const onSupplierChange = () => {
+    syncWarehouseForSupplierType()
+    syncProductForSupplier()
+  }
+
+  const onWarehouseChange = () => {
+    syncSupplierForWarehouseType()
+    syncSectionForWarehouse()
+    syncProductForSupplier()
+  }
 
   const sectionOptions = computed(() =>
     sections.value
@@ -117,8 +258,10 @@ export function useDeliveries() {
     return deliveries.value.filter((d) => {
       const supplierName = d.suppliers?.name || ''
       const warehouseName = d.warehouses?.name || ''
+      const productName = d.products?.name || ''
       return supplierName.includes(q)
         || warehouseName.includes(q)
+        || productName.includes(q)
         || (d.vehicle_number || '').includes(q)
         || (d.notes || '').includes(q)
     })
@@ -171,20 +314,36 @@ export function useDeliveries() {
   })
 
   const loadLookups = async () => {
-    const [seasonRes, suppliersRes, warehousesRes, sectionsRes] = await Promise.all([
+    const [seasonRes, suppliersRes, warehousesRes, sectionsRes, productsRes, statusesRes] = await Promise.all([
       client.from('seasons').select('id, name, ardab_factor').eq('is_active', true).maybeSingle(),
-      client.from('suppliers').select('id, name').eq('is_active', true).order('name'),
-      client.from('warehouses').select('id, name').eq('is_active', true).order('name'),
-      client.from('warehouse_sections').select('id, name, warehouse_id').eq('is_active', true).order('name')
+      client.from('suppliers').select('id, name, account_type_id, account_types(name)').eq('is_active', true).order('name'),
+      client.from('warehouses').select('id, name, account_type_id, account_types(name)').eq('is_active', true).order('name'),
+      client.from('warehouse_sections').select('id, name, warehouse_id').eq('is_active', true).order('name'),
+      client.from('products').select('id, name').eq('is_active', true).order('name'),
+      client.from('stock_statuses').select('id, name, product_id').eq('is_active', true).order('name')
     ])
     if (seasonRes.error) throw seasonRes.error
     if (suppliersRes.error) throw suppliersRes.error
     if (warehousesRes.error) throw warehousesRes.error
     if (sectionsRes.error) throw sectionsRes.error
+    if (productsRes.error) throw productsRes.error
+    if (statusesRes.error) throw statusesRes.error
     activeSeason.value = seasonRes.data
-    suppliers.value = suppliersRes.data ?? []
-    warehouses.value = warehousesRes.data ?? []
+    suppliers.value = (suppliersRes.data ?? []).map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      account_type_id: s.account_type_id,
+      account_type_name: s.account_types?.name || '—'
+    }))
+    warehouses.value = (warehousesRes.data ?? []).map((w: any) => ({
+      id: w.id,
+      name: w.name,
+      account_type_id: w.account_type_id,
+      account_type_name: w.account_types?.name || '—'
+    }))
     sections.value = sectionsRes.data ?? []
+    products.value = productsRes.data ?? []
+    stockStatuses.value = statusesRes.data ?? []
   }
 
   const loadPaymentsForDeliveries = async (deliveryIds: string[]) => {
@@ -210,17 +369,27 @@ export function useDeliveries() {
       if (!activeSeason.value) {
         deliveries.value = []
         costPayments.value = []
+        seasonPurchases.value = []
         return
       }
-      const { data, error } = await client
-        .from('warehouse_deliveries')
-        .select('*, suppliers(id, name), warehouses(id, name)')
-        .eq('season_id', activeSeason.value.id)
-        .eq('is_cancelled', false)
-        .order('delivery_date', { ascending: false })
-        .order('created_at', { ascending: false })
-      if (error) throw error
-      deliveries.value = (data ?? []) as WarehouseDelivery[]
+      const [deliveriesRes, purchasesRes] = await Promise.all([
+        client
+          .from('warehouse_deliveries')
+          .select('*, suppliers(id, name), warehouses(id, name), products(id, name), stock_statuses(id, name)')
+          .eq('season_id', activeSeason.value.id)
+          .eq('is_cancelled', false)
+          .order('delivery_date', { ascending: false })
+          .order('created_at', { ascending: false }),
+        client
+          .from('purchases')
+          .select('supplier_id, product_id, quantity_kg')
+          .eq('season_id', activeSeason.value.id)
+          .eq('is_cancelled', false)
+      ])
+      if (deliveriesRes.error) throw deliveriesRes.error
+      if (purchasesRes.error) throw purchasesRes.error
+      deliveries.value = (deliveriesRes.data ?? []) as WarehouseDelivery[]
+      seasonPurchases.value = (purchasesRes.data ?? []) as PurchaseLite[]
       await loadPaymentsForDeliveries(deliveries.value.map(d => d.id))
     } catch (e: any) {
       toast.add({ title: 'تعذر تحميل التسليمات', description: e.message, color: 'error' })
@@ -242,10 +411,30 @@ export function useDeliveries() {
       toast.add({ title: 'لا توجد شون', description: 'أضف شونة قبل تسجيل تسليم', color: 'warning' })
       return
     }
+    if (!products.value.length) {
+      toast.add({ title: 'لا توجد أصناف', description: 'أضف صنفاً قبل تسجيل تسليم', color: 'warning' })
+      return
+    }
     editing.value = null
     form.supplier_id = suppliers.value[0]?.id || ''
-    form.warehouse_id = warehouses.value[0]?.id || ''
-    syncSectionForWarehouse()
+    syncWarehouseForSupplierType()
+    if (!warehouseOptions.value.length) {
+      toast.add({
+        title: 'لا توجد شون بنفس نوع المورد',
+        description: 'أضف شونة بنفس نوع الحساب أولاً',
+        color: 'warning'
+      })
+      return
+    }
+    syncProductForSupplier()
+    if (!productOptions.value.length) {
+      toast.add({
+        title: 'لا يوجد صنف للتسليم',
+        description: 'سجّل شراء لهذا المورد أولاً',
+        color: 'warning'
+      })
+      return
+    }
     form.delivery_date = todayIsoDate()
     form.quantity_kg = ''
     form.nolon_total = ''
@@ -263,6 +452,7 @@ export function useDeliveries() {
     form.supplier_id = row.supplier_id
     form.warehouse_id = row.warehouse_id
     form.section_id = row.section_id
+    form.product_id = row.product_id
     syncSectionForWarehouse()
     form.delivery_date = row.delivery_date
     form.quantity_kg = String(row.quantity_kg)
@@ -339,13 +529,13 @@ export function useDeliveries() {
   }
 
   const softDeletePayment = async (payment: DeliveryCostPaymentLite) => {
-    const ok = await askConfirm(`حذف دفعة ${deliveryCostKindLabel(payment.kind)}؟`)
+    const ok = await askConfirm(`حذف دفعة ${deliveryCostKindLabel(payment.kind)} نهائياً؟`)
     if (!ok) return
     saving.value = true
     try {
       const { error } = await client
         .from('delivery_cost_payments')
-        .update({ is_cancelled: true })
+        .delete()
         .eq('id', payment.id)
       if (error) throw error
       toast.add({ title: 'تم حذف الدفعة', color: 'success' })
@@ -370,6 +560,23 @@ export function useDeliveries() {
       toast.add({ title: 'اختر الشونة', color: 'warning' })
       return
     }
+    const supplier = suppliers.value.find(s => s.id === form.supplier_id)
+    const warehouse = warehouses.value.find(w => w.id === form.warehouse_id)
+    if (
+      supplier
+      && warehouse
+      && supplier.account_type_id !== warehouse.account_type_id
+    ) {
+      toast.add({
+        title: 'نوع المورد يجب أن يطابق نوع الشونة',
+        color: 'warning'
+      })
+      return
+    }
+    if (!form.product_id) {
+      toast.add({ title: 'اختر الصنف', color: 'warning' })
+      return
+    }
     if (!form.section_id) {
       toast.add({ title: 'اختر الربع', color: 'warning' })
       return
@@ -381,6 +588,16 @@ export function useDeliveries() {
     const quantityKg = parseDecimal(form.quantity_kg)
     if (!(quantityKg > 0)) {
       toast.add({ title: 'الكمية يجب أن تكون أكبر من صفر', color: 'warning' })
+      return
+    }
+
+    const maxKg = deliveryMaxKgAllowed.value
+    if (quantityKg > maxKg + 0.001) {
+      toast.add({
+        title: 'الكمية أكبر من المطلوب استلامه لهذا الصنف',
+        description: `المتبقي المتاح: ${maxKg.toFixed(2)} كجم`,
+        color: 'warning'
+      })
       return
     }
 
@@ -400,11 +617,26 @@ export function useDeliveries() {
       }
     }
 
+    const statusId =
+      editing.value && editing.value.product_id === form.product_id
+        ? editing.value.status_id
+        : await resolveStatusIdForProduct(form.product_id)
+    if (!statusId) {
+      toast.add({
+        title: 'تعذر تحديد حالة الصنف',
+        description: 'أضف حالات من صفحة الصنف أولاً',
+        color: 'warning'
+      })
+      return
+    }
+
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: form.supplier_id,
       warehouse_id: form.warehouse_id,
       section_id: form.section_id,
+      product_id: form.product_id,
+      status_id: statusId,
       delivery_date: form.delivery_date,
       quantity_kg: quantityKg,
       ardab: computedArdab.value,
@@ -466,11 +698,11 @@ export function useDeliveries() {
   }
 
   const softDelete = async (row: WarehouseDelivery) => {
-    const ok = await askConfirm('حذف التسليم؟')
+    const ok = await askConfirm('حذف التسليم نهائياً؟')
     if (!ok) return
     saving.value = true
     try {
-      const { error } = await client.from('warehouse_deliveries').update({ is_cancelled: true }).eq('id', row.id)
+      const { error } = await client.from('warehouse_deliveries').delete().eq('id', row.id)
       if (error) throw error
       toast.add({ title: 'تم الحذف', color: 'success' })
       await load()
@@ -495,6 +727,10 @@ export function useDeliveries() {
     activeSeason,
     supplierOptions,
     warehouseOptions,
+    productOptions,
+    deliveryMaxKgAllowed,
+    onSupplierChange,
+    onWarehouseChange,
     computedArdab,
     expandedDeliveryId,
     paymentModalOpen,

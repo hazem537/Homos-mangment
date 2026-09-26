@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { formatMoney, formatNumber, signedTone } from '~/utils/formatNumber'
-import { supplierAccountTypeLabel } from '~/utils/supplierAccountType'
+import { accountTypeLabel, withAccountType } from '~/utils/accountType'
 
 const {
   loading,
   saving,
   search,
+  selectedProductId,
+  productOptions,
   modalOpen,
   form,
   filtered,
   activeSeasonName,
-  supplierAccountTypeOptions,
   openCreate,
   openEdit,
   save,
@@ -36,12 +37,22 @@ const {
       </UButton>
     </div>
 
-    <UInput
-      v-model="search"
-      icon="i-lucide-search"
-      placeholder="بحث بالاسم..."
-      class="max-w-md"
-    />
+    <div class="flex flex-wrap items-center gap-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="بحث بالاسم..."
+        class="max-w-md"
+      />
+      <USelect
+        v-model="selectedProductId"
+        :items="productOptions"
+        value-key="value"
+        label-key="label"
+        class="w-48"
+        placeholder="الصنف"
+      />
+    </div>
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
@@ -56,6 +67,9 @@ const {
               </th>
               <th class="p-3 font-medium">
                 النوع
+              </th>
+              <th class="p-3 font-medium">
+                الصنف
               </th>
               <th class="p-3 font-medium">
                 أردب مشتراة
@@ -83,7 +97,7 @@ const {
           <tbody>
             <tr
               v-for="row in filtered"
-              :key="row.supplier_id"
+              :key="`${row.supplier_id}-${row.product_id}`"
               class="border-t border-default"
             >
               <td class="p-3 font-medium">
@@ -91,14 +105,17 @@ const {
                   :to="`/suppliers/${row.supplier_id}`"
                   class="hover:text-primary hover:underline"
                 >
-                  {{ row.supplier_name }}
+                  {{ withAccountType(row.supplier_name, row.account_type_name) }}
                 </NuxtLink>
                 <p v-if="row.notes" class="text-xs text-muted font-normal mt-0.5">
                   {{ row.notes }}
                 </p>
               </td>
               <td class="p-3">
-                {{ supplierAccountTypeLabel(row.account_type) }}
+                {{ accountTypeLabel(row.account_type_name) }}
+              </td>
+              <td class="p-3">
+                {{ row.product_name || '—' }}
               </td>
               <td class="p-3" dir="ltr">
                 {{ formatNumber(row.ardab_total) }}
@@ -148,7 +165,7 @@ const {
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="9" class="p-6 text-center text-muted">
+              <td colspan="10" class="p-6 text-center text-muted">
                 لا يوجد موردون بعد
               </td>
             </tr>
@@ -168,13 +185,7 @@ const {
             />
           </UFormField>
           <UFormField label="النوع" required>
-            <USelect
-              v-model="form.account_type"
-              :items="supplierAccountTypeOptions"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
+            <AccountTypeField v-model="form.account_type_id" />
           </UFormField>
           <UFormField label="ملاحظات">
             <UTextarea v-model="form.notes" class="w-full" :rows="3" />

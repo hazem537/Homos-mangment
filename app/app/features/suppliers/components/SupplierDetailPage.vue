@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatMoney, formatNumber, signedTone } from '~/utils/formatNumber'
-import { supplierAccountTypeLabel } from '~/utils/supplierAccountType'
+import { accountTypeLabel } from '~/utils/accountType'
 
 const props = defineProps<{
   supplierId: string
@@ -11,9 +11,13 @@ const {
   saving,
   supplier,
   activeSeason,
-  purchases,
-  transfers,
-  deliveries,
+  filteredPurchases,
+  filteredTransfers,
+  filteredDeliveries,
+  selectedProductId,
+  selectedProductName,
+  selectedProductRemainingKg,
+  onSelectedProductChange,
   isPurchaseCreating,
   isTransferCreating,
   isDeliveryCreating,
@@ -42,10 +46,10 @@ const {
   computedPurchaseArdab,
   computedPurchaseTotal,
   warehouseOptions,
+  productOptions,
   sectionOptions,
   onDeliveryWarehouseChange,
   transferKindOptions,
-  supplierAccountTypeOptions,
   transferKindLabel,
   deliveryCostKindLabel,
   nolonRestOf,
@@ -104,6 +108,11 @@ const ledgerTableClass =
 /** Table column header cells — same height across all three ledgers */
 const ledgerThClass =
   'h-11 border-e border-default/50 p-2.5 text-base font-medium align-middle last:border-e-0'
+/** Notes / البيان — wrap inside cell so table border expands around content */
+const ledgerNotesTdClass =
+  'max-w-[12rem] p-2 align-middle text-start text-muted whitespace-normal break-words'
+const ledgerNotesThClass =
+  'h-11 max-w-[12rem] border-e border-default/50 p-2.5 text-base font-medium align-middle last:border-e-0'
 /** Empty grid cells that fill leftover height above totals */
 const ledgerFillTdClass =
   'h-full min-h-12 border-t border-e border-default/40 bg-elevated/20 p-0 last:border-e-0'
@@ -164,13 +173,33 @@ const onDeliveryKey = (e: KeyboardEvent) => {
               size="sm"
               color="warning"
             >
-              {{ supplierAccountTypeLabel(supplier.account_type) }}
+              {{ accountTypeLabel(supplier.account_type_name) }}
             </UBadge>
           </div>
           <p v-if="supplier?.notes" class="mt-1 truncate text-sm text-muted">
             {{ supplier.notes }}
           </p>
         </div>
+      </div>
+
+      <div
+        v-if="supplier && activeSeason"
+        class="flex flex-wrap items-center gap-2"
+      >
+        <USelect
+          v-model="selectedProductId"
+          :items="productOptions"
+          value-key="value"
+          label-key="label"
+          class="w-48"
+          placeholder="اختر الصنف"
+          @update:model-value="onSelectedProductChange"
+        />
+        <p class="text-sm text-muted tabular-nums whitespace-nowrap" dir="ltr">
+          متبقي:
+          <span class="font-medium text-highlighted">{{ formatNumber(selectedProductRemainingKg) }}</span>
+          كجم
+        </p>
       </div>
 
       <UButton
@@ -208,7 +237,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
         class="shrink-0 overflow-x-auto tabular-nums py-1"
       >
         <div class="flex flex-nowrap items-stretch gap-x-6">
-          <!-- Group 1: quantities -->
+          <!-- Group 1: quantities (per product) -->
           <div class="flex flex-nowrap items-stretch gap-1.5 shrink-0">
             <UCard class="min-w-28" :ui="statsCardUi">
               <p class="text-xs font-medium text-muted">
@@ -216,6 +245,12 @@ const onDeliveryKey = (e: KeyboardEvent) => {
               </p>
               <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
                 {{ formatNumber(supplierDetailStats.kg) }}
+              </p>
+              <p
+                v-if="selectedProductName !== '—'"
+                class="mt-0.5 max-w-28 truncate text-[0.7rem] text-muted"
+              >
+                {{ selectedProductName }}
               </p>
             </UCard>
             <UCard class="min-w-28" :ui="statsCardUi">
@@ -228,7 +263,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
             </UCard>
           </div>
 
-          <!-- Group 2: prices -->
+          <!-- Group 2: prices (per product) -->
           <div class="flex flex-nowrap items-stretch gap-1.5 shrink-0">
             <UCard class="min-w-32" :ui="statsCardUi">
               <p class="text-xs font-medium text-muted">
@@ -237,7 +272,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
               <p
                 class="mt-0.5 text-base font-semibold tracking-tight text-highlighted"
                 dir="ltr"
-                title="التكلفة ÷ أردب"
+                title="(مشتريات + نولون + نثريات) ÷ أردب لهذا الصنف"
               >
                 {{ formatMoney(supplierDetailStats.avgPrice) }}
               </p>
@@ -252,7 +287,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
             </UCard>
           </div>
 
-          <!-- Group 3: money + cost -->
+          <!-- Group 3: money + cost (supplier-wide except التكلفة) -->
           <div class="flex flex-nowrap items-stretch gap-1.5 shrink-0">
             <UCard class="min-w-36" :ui="statsCardUi">
               <p class="text-xs font-medium text-muted">
@@ -261,7 +296,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
               <p
                 class="mt-0.5 text-base font-semibold tracking-tight text-highlighted"
                 dir="ltr"
-                title="مشتريات + نولون + نثريات + عموله"
+                title="مشتريات + نولون + نثريات لهذا الصنف"
               >
                 {{ formatMoney(supplierDetailStats.costTotal) }}
               </p>
@@ -332,7 +367,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                   المشتريات
                 </p>
                 <UBadge size="sm" variant="subtle" color="warning">
-                  {{ purchases.length }}
+                  {{ filteredPurchases.length }}
                 </UBadge>
               </div>
             </div>
@@ -423,7 +458,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </td>
                   </tr>
 
-                  <template v-for="row in purchases" :key="row.id">
+                  <template v-for="row in filteredPurchases" :key="row.id">
                     <tr
                       v-if="isPurchaseRowEditing(row)"
                       class="border-t border-primary/30 bg-primary/5"
@@ -525,9 +560,9 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </tr>
                   </template>
 
-                  <tr v-if="!purchases.length && !isPurchaseCreating">
+                  <tr v-if="!filteredPurchases.length && !isPurchaseCreating">
                     <td colspan="7" class="border-t border-default p-6 text-center text-muted">
-                      لا توجد مشتريات — اضغط +
+                      لا توجد مشتريات لهذا الصنف — اضغط +
                     </td>
                   </tr>
 
@@ -543,7 +578,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                 <tfoot class="sticky bottom-0 z-[2]">
                   <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
                     <td :class="[ledgerTotalTdClass, 'text-muted']">
-                      <UTooltip text="صف مجاميع المشتريات لهذا المورد في الموسم النشط">
+                      <UTooltip text="صف مجاميع المشتريات لهذا الصنف في الموسم النشط">
                         <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
                       </UTooltip>
                     </td>
@@ -563,7 +598,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </td>
                     <td :class="ledgerTotalTdClass" />
                     <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="متوسط سعر الأردب المرجح لكل المشتريات">
+                      <UTooltip text="متوسط سعر الأردب المرجح لمشتريات هذا الصنف">
                         <span class="cursor-help border-b border-dotted border-muted">
                           {{ formatMoney(purchaseTotals.avgPrice) }}
                         </span>
@@ -600,7 +635,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                   التحويلات
                 </p>
                 <UBadge size="sm" variant="subtle" color="warning">
-                  {{ transfers.length }}
+                  {{ filteredTransfers.length }}
                 </UBadge>
               </div>
             </div>
@@ -617,7 +652,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     <th :class="ledgerThClass">
                       المبلغ
                     </th>
-                    <th :class="ledgerThClass">
+                    <th :class="ledgerNotesThClass">
                       البيان
                     </th>
                     <th :class="ledgerThClass" />
@@ -687,7 +722,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </td>
                   </tr>
 
-                  <template v-for="row in transfers" :key="row.id">
+                  <template v-for="row in filteredTransfers" :key="row.id">
                     <tr
                       v-if="isTransferRowEditing(row)"
                       class="border-t border-primary/30 bg-primary/5"
@@ -767,7 +802,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                       <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
                         {{ formatMoney(row.amount) }}
                       </td>
-                      <td class="p-2 align-middle text-muted" :title="row.notes || ''">
+                      <td :class="ledgerNotesTdClass" :title="row.notes || ''">
                         {{ row.notes || '—' }}
                       </td>
                       <td class="p-1 align-middle">
@@ -791,9 +826,9 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </tr>
                   </template>
 
-                  <tr v-if="!transfers.length && !isTransferCreating">
+                  <tr v-if="!filteredTransfers.length && !isTransferCreating">
                     <td colspan="5" class="border-t border-default p-6 text-center text-muted">
-                      لا توجد تحويلات
+                      لا توجد تحويلات لهذا الصنف
                     </td>
                   </tr>
 
@@ -851,7 +886,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                   التسليمات
                 </p>
                 <UBadge size="sm" variant="subtle" color="warning">
-                  {{ deliveries.length }}
+                  {{ filteredDeliveries.length }}
                 </UBadge>
               </div>
             </div>
@@ -1024,7 +1059,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </td>
                   </tr>
 
-                  <template v-for="row in deliveries" :key="row.id">
+                  <template v-for="row in filteredDeliveries" :key="row.id">
                     <tr
                       v-if="isDeliveryRowEditing(row)"
                       class="border-t border-primary/30 bg-primary/5"
@@ -1225,9 +1260,9 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </template>
                   </template>
 
-                  <tr v-if="!deliveries.length && !isDeliveryCreating">
+                  <tr v-if="!filteredDeliveries.length && !isDeliveryCreating">
                     <td colspan="13" class="border-t border-default p-6 text-center text-muted">
-                      لا توجد تسليمات
+                      لا توجد تسليمات لهذا الصنف
                     </td>
                   </tr>
 
@@ -1242,7 +1277,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                 <tfoot class="sticky bottom-0 z-[2]">
                   <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
                     <td :class="[ledgerTotalTdClass, 'text-muted']">
-                      <UTooltip text="صف مجاميع التسليمات لهذا المورد في الموسم النشط">
+                      <UTooltip text="صف مجاميع التسليمات لهذا الصنف في الموسم النشط">
                         <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
                       </UTooltip>
                     </td>
@@ -1322,13 +1357,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
             />
           </UFormField>
           <UFormField label="النوع" required>
-            <USelect
-              v-model="supplierEditForm.account_type"
-              :items="supplierAccountTypeOptions"
-              value-key="value"
-              label-key="label"
-              class="w-full"
-            />
+            <AccountTypeField v-model="supplierEditForm.account_type_id" />
           </UFormField>
           <UFormField label="ملاحظات">
             <UTextarea v-model="supplierEditForm.notes" class="w-full" :rows="3" />

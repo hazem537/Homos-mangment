@@ -12,6 +12,7 @@ const {
   summary,
   activeSeason,
   supplierOptions,
+  productOptions,
   computedArdab,
   computedTotal,
   openCreate,
@@ -83,20 +84,20 @@ const {
       <UInput
         v-model="search"
         icon="i-lucide-search"
-        placeholder="بحث بالمورد أو الملاحظات..."
+        placeholder="بحث بالمورد أو الصنف أو الملاحظات..."
         class="max-w-md"
       />
     </div>
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
-        <TableSkeleton :cols="7" />
+        <TableSkeleton :cols="8" />
       </div>
       <div v-else-if="!activeSeason" class="p-6 text-center text-muted">
         لا يوجد موسم نشط — من شاشة المواسم فعّل موسماً أولاً.
       </div>
       <div v-else class="overflow-x-auto">
-        <table dir="rtl" class="w-full text-sm min-w-[720px] text-center">
+        <table dir="rtl" class="w-full text-sm min-w-[800px] text-center">
           <thead class="bg-elevated/60 text-muted">
             <tr>
               <th class="p-3 font-medium">
@@ -104,6 +105,9 @@ const {
               </th>
               <th class="p-3 font-medium">
                 المورد
+              </th>
+              <th class="p-3 font-medium">
+                الصنف
               </th>
               <th class="p-3 font-medium">
                 الكمية (كجم)
@@ -133,6 +137,9 @@ const {
               </td>
               <td class="p-3 font-medium">
                 {{ row.suppliers?.name || '—' }}
+              </td>
+              <td class="p-3">
+                {{ row.products?.name || '—' }}
               </td>
               <td class="p-3" dir="ltr">
                 {{ formatNumber(row.quantity_kg) }}
@@ -166,7 +173,7 @@ const {
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="7" class="p-6 text-center text-muted">
+              <td colspan="8" class="p-6 text-center text-muted">
                 لا توجد مشتريات في هذا الموسم بعد
               </td>
             </tr>
@@ -182,6 +189,15 @@ const {
             <USelect
               v-model="form.supplier_id"
               :items="supplierOptions"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="الصنف" required>
+            <USelect
+              v-model="form.product_id"
+              :items="productOptions"
               value-key="value"
               label-key="label"
               class="w-full"

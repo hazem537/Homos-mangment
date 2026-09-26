@@ -21,7 +21,10 @@ export function useStores() {
     const q = search.value.trim()
     if (!q) return stores.value
     return stores.value.filter(s =>
-      s.store_name.includes(q) || (s.notes || '').includes(q)
+      s.store_name.includes(q)
+      || (s.product_name || '').includes(q)
+      || (s.status_name || '').includes(q)
+      || (s.notes || '').includes(q)
     )
   })
 
@@ -87,7 +90,10 @@ export function useStores() {
   }
 
   const softDelete = async (row: StoreBalance) => {
-    if (Math.abs(Number(row.kg_total)) > 0.001) {
+    const kgTotal = stores.value
+      .filter(s => s.store_id === row.store_id)
+      .reduce((sum, s) => sum + Number(s.kg_total), 0)
+    if (Math.abs(kgTotal) > 0.001) {
       toast.add({
         title: 'لا يمكن حذف المخزن',
         description: 'الرصيد يجب أن يكون صفراً تقريباً',
@@ -95,11 +101,13 @@ export function useStores() {
       })
       return
     }
-    const ok = await askConfirm(`حذف المخزن «${row.store_name}»؟`)
+    const ok = await askConfirm(`حذف المخزن «${row.store_name}» نهائياً؟`)
     if (!ok) return
     saving.value = true
     try {
-      const { error } = await client.from('stores').update({ is_active: false }).eq('id', row.store_id)
+      await client.from('stock_movements').delete().eq('from_kind', 'store').eq('from_id', row.store_id)
+      await client.from('stock_movements').delete().eq('to_kind', 'store').eq('to_id', row.store_id)
+      const { error } = await client.from('stores').delete().eq('id', row.store_id)
       if (error) throw error
       toast.add({ title: 'تم حذف المخزن', color: 'success' })
       await load()

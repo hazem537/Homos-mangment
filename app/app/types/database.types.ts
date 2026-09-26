@@ -8,9 +8,8 @@ export type Json =
 
 export type AppRole = 'admin' | 'accountant' | 'warehouse'
 export type TransferKind = 'transfer' | 'settlement' | 'other' | 'commission'
-export type SupplierAccountType = 'normal' | 'investment' | 'company'
 export type DeliveryCostKind = 'nolon' | 'nathriyat'
-export type StockLocationKind = 'section' | 'store' | 'mekla' | 'client'
+export type StockLocationKind = 'section' | 'store' | 'mekla' | 'client' | 'waste'
 
 export type Database = {
   public: {
@@ -78,7 +77,7 @@ export type Database = {
           name: string
           notes: string | null
           is_active: boolean
-          account_type: SupplierAccountType
+          account_type_id: string
           created_at: string
           updated_at: string
         }
@@ -87,7 +86,7 @@ export type Database = {
           name: string
           notes?: string | null
           is_active?: boolean
-          account_type?: SupplierAccountType
+          account_type_id: string
           created_at?: string
           updated_at?: string
         }
@@ -96,11 +95,19 @@ export type Database = {
           name?: string
           notes?: string | null
           is_active?: boolean
-          account_type?: SupplierAccountType
+          account_type_id?: string
           created_at?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: 'suppliers_account_type_id_fkey'
+            columns: ['account_type_id']
+            isOneToOne: false
+            referencedRelation: 'account_types'
+            referencedColumns: ['id']
+          }
+        ]
       }
       warehouses: {
         Row: {
@@ -108,6 +115,7 @@ export type Database = {
           name: string
           is_active: boolean
           notes: string | null
+          account_type_id: string
           created_at: string
           updated_at: string
         }
@@ -116,6 +124,7 @@ export type Database = {
           name: string
           is_active?: boolean
           notes?: string | null
+          account_type_id: string
           created_at?: string
           updated_at?: string
         }
@@ -124,16 +133,118 @@ export type Database = {
           name?: string
           is_active?: boolean
           notes?: string | null
+          account_type_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'warehouses_account_type_id_fkey'
+            columns: ['account_type_id']
+            isOneToOne: false
+            referencedRelation: 'account_types'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      account_types: {
+        Row: {
+          id: string
+          name: string
+          notes: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          notes?: string | null
+          is_active?: boolean
           created_at?: string
           updated_at?: string
         }
         Relationships: []
+      }
+      products: {
+        Row: {
+          id: string
+          name: string
+          notes: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      stock_statuses: {
+        Row: {
+          id: string
+          product_id: string
+          name: string
+          notes: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          product_id: string
+          name: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          product_id?: string
+          name?: string
+          notes?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'stock_statuses_product_id_fkey'
+            columns: ['product_id']
+            isOneToOne: false
+            referencedRelation: 'products'
+            referencedColumns: ['id']
+          }
+        ]
       }
       purchases: {
         Row: {
           id: string
           season_id: string
           supplier_id: string
+          product_id: string
           purchase_date: string
           quantity_kg: number
           ardab: number
@@ -148,6 +259,7 @@ export type Database = {
           id?: string
           season_id: string
           supplier_id: string
+          product_id: string
           purchase_date?: string
           quantity_kg: number
           ardab: number
@@ -162,6 +274,7 @@ export type Database = {
           id?: string
           season_id?: string
           supplier_id?: string
+          product_id?: string
           purchase_date?: string
           quantity_kg?: number
           ardab?: number
@@ -186,6 +299,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: 'suppliers'
             referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'purchases_product_id_fkey'
+            columns: ['product_id']
+            isOneToOne: false
+            referencedRelation: 'products'
+            referencedColumns: ['id']
           }
         ]
       }
@@ -194,6 +314,7 @@ export type Database = {
           id: string
           season_id: string
           supplier_id: string
+          product_id: string
           transfer_date: string
           amount: number
           kind: TransferKind
@@ -206,6 +327,7 @@ export type Database = {
           id?: string
           season_id: string
           supplier_id: string
+          product_id: string
           transfer_date?: string
           amount: number
           kind?: TransferKind
@@ -218,6 +340,7 @@ export type Database = {
           id?: string
           season_id?: string
           supplier_id?: string
+          product_id?: string
           transfer_date?: string
           amount?: number
           kind?: TransferKind
@@ -239,6 +362,61 @@ export type Database = {
             columns: ['supplier_id']
             isOneToOne: false
             referencedRelation: 'suppliers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cash_transfers_product_id_fkey'
+            columns: ['product_id']
+            isOneToOne: false
+            referencedRelation: 'products'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      warehouse_expenses: {
+        Row: {
+          id: string
+          warehouse_id: string
+          season_id: string
+          payment_date: string
+          amount: number
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          warehouse_id: string
+          season_id: string
+          payment_date?: string
+          amount: number
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          season_id?: string
+          payment_date?: string
+          amount?: number
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'warehouse_expenses_warehouse_id_fkey'
+            columns: ['warehouse_id']
+            isOneToOne: false
+            referencedRelation: 'warehouses'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'warehouse_expenses_season_id_fkey'
+            columns: ['season_id']
+            isOneToOne: false
+            referencedRelation: 'seasons'
             referencedColumns: ['id']
           }
         ]
@@ -366,6 +544,8 @@ export type Database = {
         Row: {
           id: string
           season_id: string
+          product_id: string
+          status_id: string
           movement_date: string
           quantity_kg: number
           from_kind: StockLocationKind
@@ -380,6 +560,8 @@ export type Database = {
         Insert: {
           id?: string
           season_id: string
+          product_id: string
+          status_id: string
           movement_date?: string
           quantity_kg: number
           from_kind: StockLocationKind
@@ -394,6 +576,8 @@ export type Database = {
         Update: {
           id?: string
           season_id?: string
+          product_id?: string
+          status_id?: string
           movement_date?: string
           quantity_kg?: number
           from_kind?: StockLocationKind
@@ -412,6 +596,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: 'seasons'
             referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'stock_movements_product_id_fkey'
+            columns: ['product_id']
+            isOneToOne: false
+            referencedRelation: 'products'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'stock_movements_status_id_fkey'
+            columns: ['status_id']
+            isOneToOne: false
+            referencedRelation: 'stock_statuses'
+            referencedColumns: ['id']
           }
         ]
       }
@@ -422,6 +620,8 @@ export type Database = {
           warehouse_id: string
           section_id: string
           supplier_id: string
+          product_id: string
+          status_id: string
           delivery_date: string
           quantity_kg: number
           ardab: number
@@ -439,6 +639,8 @@ export type Database = {
           warehouse_id: string
           section_id: string
           supplier_id: string
+          product_id: string
+          status_id: string
           delivery_date?: string
           quantity_kg: number
           ardab: number
@@ -456,6 +658,8 @@ export type Database = {
           warehouse_id?: string
           section_id?: string
           supplier_id?: string
+          product_id?: string
+          status_id?: string
           delivery_date?: string
           quantity_kg?: number
           ardab?: number
@@ -494,6 +698,20 @@ export type Database = {
             columns: ['supplier_id']
             isOneToOne: false
             referencedRelation: 'suppliers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'warehouse_deliveries_product_id_fkey'
+            columns: ['product_id']
+            isOneToOne: false
+            referencedRelation: 'products'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'warehouse_deliveries_status_id_fkey'
+            columns: ['status_id']
+            isOneToOne: false
+            referencedRelation: 'stock_statuses'
             referencedColumns: ['id']
           }
         ]
@@ -549,6 +767,7 @@ export type Database = {
           id: string
           season_id: string
           supplier_id: string
+          product_id: string
           purchase_date: string
           quantity_kg: number
           ardab: number
@@ -574,6 +793,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: 'suppliers'
             referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'purchases_product_id_fkey'
+            columns: ['product_id']
+            isOneToOne: false
+            referencedRelation: 'products'
+            referencedColumns: ['id']
           }
         ]
       }
@@ -586,8 +812,14 @@ export type Database = {
         Returns: {
           warehouse_id: string
           warehouse_name: string
+          product_id: string | null
+          product_name: string | null
+          status_id: string | null
+          status_name: string | null
           notes: string | null
           is_active: boolean
+          account_type_id: string
+          account_type_name: string
           kg_total: number
           ardab_total: number
         }[]
@@ -600,6 +832,10 @@ export type Database = {
         Returns: {
           section_id: string
           section_name: string
+          product_id: string | null
+          product_name: string | null
+          status_id: string | null
+          status_name: string | null
           notes: string | null
           is_active: boolean
           kg_in: number
@@ -614,6 +850,10 @@ export type Database = {
         Returns: {
           store_id: string
           store_name: string
+          product_id: string | null
+          product_name: string | null
+          status_id: string | null
+          status_name: string | null
           notes: string | null
           is_active: boolean
           kg_total: number
@@ -626,6 +866,10 @@ export type Database = {
         Returns: {
           mekla_id: string
           mekla_name: string
+          product_id: string | null
+          product_name: string | null
+          status_id: string | null
+          status_name: string | null
           notes: string | null
           is_active: boolean
           kg_total: number
@@ -635,6 +879,8 @@ export type Database = {
         Args: {
           p_kind: StockLocationKind
           p_id: string
+          p_product_id: string
+          p_status_id: string
           p_season_id?: string | null
         }
         Returns: number
@@ -646,9 +892,12 @@ export type Database = {
         Returns: {
           supplier_id: string
           supplier_name: string
+          product_id: string | null
+          product_name: string | null
           notes: string | null
           is_active: boolean
-          account_type: SupplierAccountType
+          account_type_id: string
+          account_type_name: string
           purchases_total: number
           transfers_total: number
           commission_total: number
@@ -666,7 +915,10 @@ export type Database = {
         Returns: {
           supplier_id: string
           supplier_name: string
-          account_type: SupplierAccountType
+          product_id: string | null
+          product_name: string | null
+          account_type_id: string
+          account_type_name: string
           purchases_total: number
           transfers_total: number
           commission_total: number
@@ -680,7 +932,6 @@ export type Database = {
     Enums: {
       app_role: AppRole
       transfer_kind: TransferKind
-      supplier_account_type: SupplierAccountType
       delivery_cost_kind: DeliveryCostKind
       stock_location_kind: StockLocationKind
     }

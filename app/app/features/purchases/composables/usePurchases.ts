@@ -3,11 +3,13 @@ import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 
 export type Purchase = Database['public']['Tables']['purchases']['Row'] & {
   suppliers?: { id: string, name: string } | null
+  products?: { id: string, name: string } | null
   seasons?: { id: string, name: string, ardab_factor: number } | null
 }
 
 type SeasonLite = { id: string, name: string, ardab_factor: number }
 type SupplierLite = { id: string, name: string }
+type ProductLite = { id: string, name: string }
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10)
@@ -23,6 +25,7 @@ export function usePurchases() {
   const saving = ref(false)
   const purchases = ref<Purchase[]>([])
   const suppliers = ref<SupplierLite[]>([])
+  const products = ref<ProductLite[]>([])
   const activeSeason = ref<SeasonLite | null>(null)
   const search = ref('')
   const modalOpen = ref(false)
@@ -30,6 +33,7 @@ export function usePurchases() {
 
   const form = reactive({
     supplier_id: '' as string,
+    product_id: '' as string,
     purchase_date: todayIsoDate(),
     quantity_kg: '' as string,
     price_per_ardab: '' as string,
@@ -49,13 +53,18 @@ export function usePurchases() {
     suppliers.value.map(s => ({ label: s.name, value: s.id }))
   )
 
+  const productOptions = computed(() =>
+    products.value.map(p => ({ label: p.name, value: p.id }))
+  )
+
   const filtered = computed(() => {
     const rows = purchases.value
     const q = search.value.trim()
     if (!q) return rows
     return rows.filter((p) => {
       const supplierName = p.suppliers?.name || ''
-      return supplierName.includes(q) || (p.notes || '').includes(q)
+      const productName = p.products?.name || ''
+      return supplierName.includes(q) || productName.includes(q) || (p.notes || '').includes(q)
     })
   })
 
@@ -70,14 +79,17 @@ export function usePurchases() {
   })
 
   const loadLookups = async () => {
-    const [seasonRes, suppliersRes] = await Promise.all([
+    const [seasonRes, suppliersRes, productsRes] = await Promise.all([
       client.from('seasons').select('id, name, ardab_factor').eq('is_active', true).maybeSingle(),
-      client.from('suppliers').select('id, name').eq('is_active', true).order('name')
+      client.from('suppliers').select('id, name').eq('is_active', true).order('name'),
+      client.from('products').select('id, name').eq('is_active', true).order('name')
     ])
     if (seasonRes.error) throw seasonRes.error
     if (suppliersRes.error) throw suppliersRes.error
+    if (productsRes.error) throw productsRes.error
     activeSeason.value = seasonRes.data
     suppliers.value = suppliersRes.data ?? []
+    products.value = productsRes.data ?? []
   }
 
   const load = async () => {
@@ -90,7 +102,7 @@ export function usePurchases() {
       }
       const { data, error } = await client
         .from('purchases')
-        .select('*, suppliers(id, name), seasons(id, name, ardab_factor)')
+        .select('*, suppliers(id, name), products(id, name), seasons(id, name, ardab_factor)')
         .eq('season_id', activeSeason.value.id)
         .eq('is_cancelled', false)
         .order('purchase_date', { ascending: false })
@@ -113,8 +125,13 @@ export function usePurchases() {
       toast.add({ title: 'لا يوجد موردون', description: 'أضف مورداً قبل تسجيل شراء', color: 'warning' })
       return
     }
+    if (!products.value.length) {
+      toast.add({ title: 'لا يوجد أصناف', description: 'أضف صنفاً قبل تسجيل شراء', color: 'warning' })
+      return
+    }
     editing.value = null
     form.supplier_id = suppliers.value[0]?.id || ''
+    form.product_id = products.value[0]?.id || ''
     form.purchase_date = todayIsoDate()
     form.quantity_kg = ''
     form.price_per_ardab = ''
@@ -125,6 +142,7 @@ export function usePurchases() {
   const openEdit = (row: Purchase) => {
     editing.value = row
     form.supplier_id = row.supplier_id
+    form.product_id = row.product_id
     form.purchase_date = row.purchase_date
     form.quantity_kg = String(row.quantity_kg)
     form.price_per_ardab = String(row.price_per_ardab)
@@ -139,6 +157,10 @@ export function usePurchases() {
     }
     if (!form.supplier_id) {
       toast.add({ title: 'اختر المورد', color: 'warning' })
+      return
+    }
+    if (!form.product_id) {
+      toast.add({ title: 'اختر الصنف', color: 'warning' })
       return
     }
     if (!form.purchase_date) {
@@ -159,6 +181,7 @@ export function usePurchases() {
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: form.supplier_id,
+      product_id: form.product_id,
       purchase_date: form.purchase_date,
       quantity_kg: quantityKg,
       ardab: computedArdab.value,
@@ -188,11 +211,11 @@ export function usePurchases() {
   }
 
   const softDelete = async (row: Purchase) => {
-    const ok = await askConfirm('حذف عملية الشراء؟')
+    const ok = await askConfirm('حذف عملية الشراء نهائياً؟')
     if (!ok) return
     saving.value = true
     try {
-      const { error } = await client.from('purchases').update({ is_cancelled: true }).eq('id', row.id)
+      const { error } = await client.from('purchases').delete().eq('id', row.id)
       if (error) throw error
       toast.add({ title: 'تم حذف الشراء', color: 'success' })
       await load()
@@ -216,6 +239,7 @@ export function usePurchases() {
     summary,
     activeSeason,
     supplierOptions,
+    productOptions,
     computedArdab,
     computedTotal,
     openCreate,

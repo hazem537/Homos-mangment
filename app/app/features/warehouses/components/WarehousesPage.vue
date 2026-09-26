@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { formatNumber } from '~/utils/formatNumber'
+import { accountTypeLabel, withAccountType } from '~/utils/accountType'
 
 const {
   loading,
@@ -14,6 +15,13 @@ const {
   save,
   softDelete
 } = useWarehouses()
+
+const warehouseDetailTo = (row: { warehouse_id: string, product_id?: string | null }) => {
+  if (row.product_id) {
+    return { path: `/warehouses/${row.warehouse_id}`, query: { product: row.product_id } }
+  }
+  return `/warehouses/${row.warehouse_id}`
+}
 </script>
 
 <template>
@@ -48,14 +56,23 @@ const {
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
-        <TableSkeleton :cols="4" />
+        <TableSkeleton :cols="7" />
       </div>
       <div v-else class="overflow-x-auto">
-        <table dir="rtl" class="w-full text-sm min-w-[640px] text-center">
+        <table dir="rtl" class="w-full text-sm min-w-180 text-center">
           <thead class="bg-elevated/60 text-muted">
             <tr>
               <th class="p-3 font-medium">
                 الاسم
+              </th>
+              <th class="p-3 font-medium">
+                الصنف
+              </th>
+              <th class="p-3 font-medium">
+                حالة
+              </th>
+              <th class="p-3 font-medium">
+                النوع
               </th>
               <th class="p-3 font-medium">
                 الرصيد (كجم)
@@ -71,19 +88,28 @@ const {
           <tbody>
             <tr
               v-for="row in filtered"
-              :key="row.warehouse_id"
+              :key="`${row.warehouse_id}-${row.product_id || 'none'}-${row.status_id || 'none'}`"
               class="border-t border-default"
             >
               <td class="p-3 font-medium">
                 <NuxtLink
-                  :to="`/warehouses/${row.warehouse_id}`"
+                  :to="warehouseDetailTo(row)"
                   class="text-highlighted hover:underline"
                 >
-                  {{ row.warehouse_name }}
+                  {{ withAccountType(row.warehouse_name, row.account_type_name) }}
                 </NuxtLink>
                 <p v-if="row.notes" class="text-xs text-muted font-normal mt-0.5">
                   {{ row.notes }}
                 </p>
+              </td>
+              <td class="p-3">
+                {{ row.product_name || '—' }}
+              </td>
+              <td class="p-3">
+                {{ row.status_name || '—' }}
+              </td>
+              <td class="p-3">
+                {{ accountTypeLabel(row.account_type_name) }}
               </td>
               <td class="p-3" dir="ltr">
                 {{ formatNumber(row.kg_total) }}
@@ -97,7 +123,7 @@ const {
                     size="sm"
                     variant="ghost"
                     icon="i-lucide-eye"
-                    :to="`/warehouses/${row.warehouse_id}`"
+                    :to="warehouseDetailTo(row)"
                   />
                   <UButton
                     size="sm"
@@ -117,7 +143,7 @@ const {
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="4" class="p-6 text-center text-muted">
+              <td colspan="7" class="p-6 text-center text-muted">
                 لا توجد شون
               </td>
             </tr>
@@ -131,6 +157,9 @@ const {
         <div class="space-y-4">
           <UFormField label="الاسم" required>
             <UInput v-model="form.name" class="w-full" placeholder="مثال: شونة طنطا" />
+          </UFormField>
+          <UFormField label="النوع" required>
+            <AccountTypeField v-model="form.account_type_id" />
           </UFormField>
           <UFormField label="ملاحظات">
             <UTextarea v-model="form.notes" class="w-full" :rows="3" />

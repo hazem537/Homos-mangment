@@ -1,7 +1,6 @@
 import type {
   Database,
   DeliveryCostKind,
-  SupplierAccountType,
   TransferKind,
 } from "~/types/database.types";
 import { normalizeDecimalInput, parseDecimal } from "~/utils/formatNumber";
@@ -9,7 +8,6 @@ import {
   transferKindLabel,
   transferKindOptions,
 } from "~/features/cash-transfers/composables/useCashTransfers";
-import { supplierAccountTypeOptions } from "~/utils/supplierAccountType";
 import {
   deliveryCostKindLabel,
   deliveryCostRest,
@@ -33,6 +31,8 @@ export type SupplierDelivery =
   Database["public"]["Tables"]["warehouse_deliveries"]["Row"] & {
     warehouses?: { id: string; name: string } | null;
     warehouse_sections?: { id: string; name: string; warehouse_id: string } | null;
+    products?: { id: string; name: string } | null;
+    stock_statuses?: { id: string; name: string } | null;
   };
 
 type WarehouseSectionLite = {
@@ -42,13 +42,16 @@ type WarehouseSectionLite = {
 };
 
 type SeasonLite = { id: string; name: string; ardab_factor: number };
-type WarehouseLite = { id: string; name: string };
+type WarehouseLite = { id: string; name: string; account_type_id: string };
+type ProductLite = { id: string; name: string };
+type StatusLite = { id: string; name: string; product_id: string };
 type SupplierLite = {
   id: string;
   name: string;
   notes: string | null;
   is_active: boolean;
-  account_type: SupplierAccountType;
+  account_type_id: string;
+  account_type_name: string;
 };
 
 function todayIsoDate() {
@@ -65,13 +68,19 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const saving = ref(false);
   const supplier = ref<SupplierLite | null>(null);
   const due = ref<SupplierDue | null>(null);
+  const dueByProduct = ref<SupplierDue[]>([]);
   const activeSeason = ref<SeasonLite | null>(null);
   const warehouses = ref<WarehouseLite[]>([]);
   const sections = ref<WarehouseSectionLite[]>([]);
+  const products = ref<ProductLite[]>([]);
+  const stockStatuses = ref<StatusLite[]>([]);
   const purchases = ref<SupplierPurchase[]>([]);
   const transfers = ref<SupplierTransfer[]>([]);
   const deliveries = ref<SupplierDelivery[]>([]);
   const costPayments = ref<DeliveryCostPaymentLite[]>([]);
+
+  /** Excel-sheet style: one product at a time on this page */
+  const selectedProductId = ref("");
 
   /** Inline ledger row (Excel-style) instead of create/edit modals */
   const purchaseInlineOpen = ref(false);
@@ -86,6 +95,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const paymentKind = ref<DeliveryCostKind>("nolon");
 
   const purchaseForm = reactive({
+    product_id: "" as string,
     purchase_date: todayIsoDate(),
     quantity_kg: "" as string,
     price_per_ardab: "" as string,
@@ -102,6 +112,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const deliveryForm = reactive({
     warehouse_id: "" as string,
     section_id: "" as string,
+    product_id: "" as string,
     delivery_date: todayIsoDate(),
     quantity_kg: "" as string,
     nolon_total: "" as string,
@@ -124,7 +135,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const supplierEditForm = reactive({
     name: "",
     notes: "",
-    account_type: "normal" as SupplierAccountType,
+    account_type_id: "" as string,
   });
 
   const suggestedNolon = computed(() =>
@@ -148,9 +159,182 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     return kgToArdab(parseDecimal(deliveryForm.quantity_kg), Number(factor));
   });
 
-  const warehouseOptions = computed(() =>
-    warehouses.value.map((w) => ({ label: w.name, value: w.id })),
+  const warehouseOptions = computed(() => {
+    const typeId = supplier.value?.account_type_id;
+    const rows = warehouses.value.filter(
+      (w) =>
+        !typeId
+        || w.account_type_id === typeId
+        || w.id === deliveryForm.warehouse_id,
+    );
+    return rows.map((w) => ({ label: w.name, value: w.id }));
+  });
+
+  const syncWarehouseForSupplierType = () => {
+    const options = warehouseOptions.value;
+    if (!options.length) {
+      deliveryForm.warehouse_id = "";
+      syncSectionForWarehouse();
+      return;
+    }
+    if (!options.some((o) => o.value === deliveryForm.warehouse_id)) {
+      deliveryForm.warehouse_id = options[0]?.value || "";
+    }
+    syncSectionForWarehouse();
+  };
+
+  const productOptions = computed(() =>
+    products.value.map((p) => ({ label: p.name, value: p.id })),
   );
+
+  const reloadStatuses = async () => {
+    const { data, error } = await client
+      .from("stock_statuses")
+      .select("id, name, product_id")
+      .eq("is_active", true)
+      .order("name");
+    if (error) throw error;
+    stockStatuses.value = data ?? [];
+  };
+
+  /** Delivery no longer asks for status — use product default (بدون غربلة). */
+  const resolveStatusIdForProduct = async (productId: string) => {
+    if (!productId) return null;
+    let forProduct = stockStatuses.value.filter((s) => s.product_id === productId);
+    if (!forProduct.length) {
+      await client.from("stock_statuses").insert([
+        { product_id: productId, name: "بدون غربلة", notes: "الحالة الافتراضية" },
+        { product_id: productId, name: "مغربل", notes: null },
+      ]);
+      await reloadStatuses();
+      forProduct = stockStatuses.value.filter((s) => s.product_id === productId);
+    }
+    const preferred = forProduct.find(
+      (s) => s.name.trim() === "بدون غربلة",
+    );
+    return preferred?.id || forProduct[0]?.id || null;
+  };
+
+  const deliveryProductOptions = computed(() => {
+    const purchasedIds = new Set(purchases.value.map((p) => p.product_id));
+    return products.value
+      .filter((p) => purchasedIds.has(p.id))
+      .map((p) => ({ label: p.name, value: p.id }));
+  });
+
+  const purchasedKgOf = (productId: string) =>
+    purchases.value
+      .filter((p) => p.product_id === productId)
+      .reduce((sum, p) => sum + Number(p.quantity_kg), 0);
+
+  const deliveredKgOf = (productId: string, excludeDeliveryId?: string | null) =>
+    deliveries.value
+      .filter(
+        (d) =>
+          d.product_id === productId
+          && (!excludeDeliveryId || d.id !== excludeDeliveryId),
+      )
+      .reduce((sum, d) => sum + Number(d.quantity_kg), 0);
+
+  /** Remaining purchasable kg for a product (exclude editing delivery when set). */
+  const remainingKgOfProduct = (
+    productId: string,
+    excludeDeliveryId?: string | null,
+  ) =>
+    Number(
+      (purchasedKgOf(productId) - deliveredKgOf(productId, excludeDeliveryId)).toFixed(
+        4,
+      ),
+    );
+
+  const productNameById = computed(() => {
+    const map = new Map<string, string>();
+    for (const p of products.value) map.set(p.id, p.name);
+    return map;
+  });
+
+  const productNameOf = (productId: string | null | undefined) =>
+    (productId && productNameById.value.get(productId)) || "—";
+
+  const filteredPurchases = computed(() =>
+    selectedProductId.value
+      ? purchases.value.filter((p) => p.product_id === selectedProductId.value)
+      : [],
+  );
+
+  const filteredDeliveries = computed(() =>
+    selectedProductId.value
+      ? deliveries.value.filter((d) => d.product_id === selectedProductId.value)
+      : [],
+  );
+
+  const filteredTransfers = computed(() =>
+    selectedProductId.value
+      ? transfers.value.filter((t) => t.product_id === selectedProductId.value)
+      : [],
+  );
+
+  const selectedProductName = computed(() =>
+    productNameOf(selectedProductId.value),
+  );
+
+  const selectedProductRemainingKg = computed(() =>
+    selectedProductId.value
+      ? remainingKgOfProduct(selectedProductId.value)
+      : 0,
+  );
+
+  const syncSelectedProduct = () => {
+    const options = productOptions.value;
+    if (!options.length) {
+      selectedProductId.value = "";
+      return;
+    }
+    if (
+      selectedProductId.value
+      && options.some((o) => o.value === selectedProductId.value)
+    ) {
+      return;
+    }
+    const purchasedIds = new Set(purchases.value.map((p) => p.product_id));
+    const firstPurchased = options.find((o) => purchasedIds.has(o.value));
+    selectedProductId.value = firstPurchased?.value || options[0]?.value || "";
+  };
+
+  const onSelectedProductChange = () => {
+    if (!selectedProductId.value) return;
+    if (purchaseInlineOpen.value && !editingPurchase.value) {
+      purchaseForm.product_id = selectedProductId.value;
+    }
+    if (deliveryInlineOpen.value && !editingDelivery.value) {
+      deliveryForm.product_id = selectedProductId.value;
+    }
+  };
+
+  const ardabSummary = computed(() => {
+    const rows = dueByProduct.value;
+    const total = rows.reduce((sum, r) => sum + Number(r.ardab_total || 0), 0);
+    const delivered = rows.reduce(
+      (sum, r) => sum + Number(r.ardab_delivered || 0),
+      0,
+    );
+    const remaining = rows.reduce(
+      (sum, r) => sum + Number(r.ardab_remaining || 0),
+      0,
+    );
+    return {
+      total: Number(total.toFixed(4)),
+      delivered: Number(delivered.toFixed(4)),
+      remaining: Number(remaining.toFixed(4)),
+      byProduct: rows.map((r) => ({
+        product_id: r.product_id,
+        product_name: r.product_name,
+        ardab_total: Number(r.ardab_total || 0),
+        ardab_delivered: Number(r.ardab_delivered || 0),
+        ardab_remaining: Number(r.ardab_remaining || 0),
+      })),
+    };
+  });
 
   const sectionOptions = computed(() =>
     sections.value
@@ -174,20 +358,19 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   };
 
   const purchasePriceStats = computed(() => {
-    const rows = purchases.value;
-    const nolonTotal = deliveries.value.reduce(
+    const rows = filteredPurchases.value;
+    const productDeliveries = filteredDeliveries.value;
+    const nolonTotal = productDeliveries.reduce(
       (sum, d) => sum + Number(d.nolon_total || 0),
       0,
     );
-    const nathriyatTotal = deliveries.value.reduce(
+    const nathriyatTotal = productDeliveries.reduce(
       (sum, d) => sum + Number(d.nathriyat_total || 0),
       0,
     );
-    const commissionTotal = transfers.value
-      .filter((t) => t.kind === "commission")
-      .reduce((sum, t) => sum + Number(t.amount), 0);
+    // Commission is supplier-wide money — not included in per-product costed avg
     if (!rows.length) {
-      const costedTotal = nolonTotal + nathriyatTotal + commissionTotal;
+      const costedTotal = nolonTotal + nathriyatTotal;
       return { avgPrice: 0, lastPrice: 0, costedTotal };
     }
     const totalArdab = rows.reduce((sum, p) => sum + Number(p.ardab), 0);
@@ -195,9 +378,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       (sum, p) => sum + Number(p.total_price),
       0,
     );
-    // Stats avg = (purchases + nolon + nathriyat + commission) / ardab
-    const costedTotal =
-      purchasesTotal + nolonTotal + nathriyatTotal + commissionTotal;
+    const costedTotal = purchasesTotal + nolonTotal + nathriyatTotal;
     const avgPrice =
       totalArdab > 0 ? Number((costedTotal / totalArdab).toFixed(4)) : 0;
     const lastPrice = Number(rows[rows.length - 1]?.price_per_ardab ?? 0);
@@ -205,7 +386,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   });
 
   const transferTotals = computed(() => {
-    const rows = transfers.value;
+    const rows = filteredTransfers.value;
     const commission = rows
       .filter((t) => t.kind === "commission")
       .reduce((sum, t) => sum + Number(t.amount), 0);
@@ -221,7 +402,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   });
 
   const purchaseTotals = computed(() => {
-    const rows = purchases.value;
+    const rows = filteredPurchases.value;
     const kg = rows.reduce((sum, p) => sum + Number(p.quantity_kg), 0);
     const ardab = rows.reduce((sum, p) => sum + Number(p.ardab), 0);
     const price = rows.reduce((sum, p) => sum + Number(p.total_price), 0);
@@ -245,12 +426,15 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     return Number(row?.running_avg_price ?? 0);
   };
 
-  /** Live preview only while creating/editing inline (not persisted) */
+  /** Live preview only while creating/editing inline (not persisted) — same product only */
   const computedPurchaseRunningAvg = computed(() => {
     const editingId = editingPurchase.value?.id ?? null;
+    const pid =
+      purchaseForm.product_id || selectedProductId.value || editingPurchase.value?.product_id;
     let sumArdab = 0;
     let sumMoney = 0;
     for (const p of purchases.value) {
+      if (pid && p.product_id !== pid) continue;
       if (editingId && p.id === editingId) continue;
       sumArdab += Number(p.ardab);
       sumMoney += Number(p.total_price);
@@ -261,7 +445,8 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   });
 
   const deliveryTotals = computed(() => {
-    const rows = deliveries.value;
+    const rows = filteredDeliveries.value;
+    const deliveryIds = new Set(rows.map((d) => d.id));
     const kg = rows.reduce((sum, d) => sum + Number(d.quantity_kg), 0);
     const ardab = rows.reduce((sum, d) => sum + Number(d.ardab), 0);
     const nolon = rows.reduce((sum, d) => sum + Number(d.nolon_total || 0), 0);
@@ -270,10 +455,20 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       0,
     );
     const nolonPaid = costPayments.value
-      .filter((p) => p.kind === "nolon" && !p.is_cancelled)
+      .filter(
+        (p) =>
+          p.kind === "nolon"
+          && !p.is_cancelled
+          && deliveryIds.has(p.delivery_id),
+      )
       .reduce((sum, p) => sum + Number(p.amount), 0);
     const nathriyatPaid = costPayments.value
-      .filter((p) => p.kind === "nathriyat" && !p.is_cancelled)
+      .filter(
+        (p) =>
+          p.kind === "nathriyat"
+          && !p.is_cancelled
+          && deliveryIds.has(p.delivery_id),
+      )
       .reduce((sum, p) => sum + Number(p.amount), 0);
     return {
       kg,
@@ -289,23 +484,41 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   });
 
   /**
-   * Running purchase-kg need around each delivery:
-   * before = remaining before this transfer, after = remaining after it.
+   * Running purchase-kg need around each delivery (per product of that row):
+   * before = remaining for that product before this transfer,
+   * after = remaining after it.
    * While editing a row, uses live form kg for that row.
    */
   const deliveryKgRunningById = computed(() => {
     const map = new Map<string, { before: number; after: number }>();
     const editingId = editingDelivery.value?.id ?? null;
-    let remaining = purchaseTotals.value.kg;
+    const editingPid = editingId ? deliveryForm.product_id : null;
+
+    // Remaining per product before walking deliveries in order
+    const remainingByProduct = new Map<string, number>();
+    for (const p of purchases.value) {
+      const cur = remainingByProduct.get(p.product_id) || 0;
+      remainingByProduct.set(p.product_id, cur + Number(p.quantity_kg));
+    }
+
     for (const d of deliveries.value) {
+      const pid =
+        editingId && d.id === editingId
+          ? deliveryForm.product_id || d.product_id
+          : d.product_id;
       const transfer =
         editingId && d.id === editingId
           ? parseDecimal(deliveryForm.quantity_kg)
           : Number(d.quantity_kg);
-      const before = Number(remaining.toFixed(4));
+      const before = Number((remainingByProduct.get(pid) ?? 0).toFixed(4));
       const after = Number((before - transfer).toFixed(4));
       map.set(d.id, { before, after });
-      remaining = after;
+      remainingByProduct.set(pid, after);
+    }
+
+    // If editing changed product away from original, ensure map still updated
+    if (editingId && editingPid) {
+      /* already handled in loop when id matches */
     }
     return map;
   });
@@ -313,34 +526,39 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const deliveryKgRunningOf = (deliveryId: string) =>
     deliveryKgRunningById.value.get(deliveryId) ?? { before: 0, after: 0 };
 
-  /** Preview for new delivery row (applied after all saved deliveries). */
+  /** Preview for new delivery row — remaining for selected product only. */
   const deliveryCreateKgRunning = computed(() => {
-    const before = Number(
-      (purchaseTotals.value.kg - deliveryTotals.value.kg).toFixed(4),
-    );
+    const pid = selectedProductId.value || deliveryForm.product_id;
+    const before = pid ? remainingKgOfProduct(pid) : 0;
     const after = Number(
       (before - parseDecimal(deliveryForm.quantity_kg)).toFixed(4),
     );
     return { before, after };
   });
 
-  /** Max kg allowed for current create/edit form (remaining before this row). */
+  /** Max kg allowed for current create/edit form (per selected product). */
   const deliveryMaxKgAllowed = computed(() => {
-    if (isDeliveryCreating.value) return deliveryCreateKgRunning.value.before;
+    const pid = selectedProductId.value || deliveryForm.product_id;
+    if (!pid) return 0;
+    if (isDeliveryCreating.value) return remainingKgOfProduct(pid);
     const editingId = editingDelivery.value?.id;
-    if (editingId) return deliveryKgRunningOf(editingId).before;
-    return Number(
-      (purchaseTotals.value.kg - deliveryTotals.value.kg).toFixed(4),
-    );
+    return remainingKgOfProduct(pid, editingId);
   });
 
-  /** Final remaining kg after all deliveries (uses live edit/create when open). */
+  /** Final remaining kg after all deliveries for selected product. */
   const deliveryKgRemainingFinal = computed(() => {
     if (isDeliveryCreating.value) return deliveryCreateKgRunning.value.after;
-    const rows = deliveries.value;
-    if (!rows.length) return purchaseTotals.value.kg;
-    const last = rows[rows.length - 1];
-    return deliveryKgRunningOf(last.id).after;
+    const pid = selectedProductId.value || deliveryForm.product_id;
+    if (!pid) {
+      return Number(
+        (purchaseTotals.value.kg - deliveryTotals.value.kg).toFixed(4),
+      );
+    }
+    if (editingDelivery.value) {
+      return remainingKgOfProduct(pid, editingDelivery.value.id)
+        - parseDecimal(deliveryForm.quantity_kg);
+    }
+    return remainingKgOfProduct(pid);
   });
 
   const deliveryCostStats = computed(() => {
@@ -355,25 +573,23 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     };
   });
 
-  /** Compact supplier header stats (replaces old 4 cards) */
+  /** Due row for the selected product (money is per supplier × product) */
+  const selectedProductDue = computed(() => {
+    const pid = selectedProductId.value;
+    if (!pid) return null;
+    return dueByProduct.value.find((r) => r.product_id === pid) ?? null;
+  });
+
+  /** Compact header stats — all scoped to selected product */
   const supplierDetailStats = computed(() => {
-    const kg = purchases.value.reduce(
-      (sum, p) => sum + Number(p.quantity_kg),
-      0,
-    );
-    const ardab = purchases.value.reduce(
-      (sum, p) => sum + Number(p.ardab),
-      0,
-    );
     const paidTotal = transferTotals.value.amount;
-    const supplierDue = Number(due.value?.balance ?? 0);
+    const supplierDue = Number(selectedProductDue.value?.balance ?? 0);
     const deliveryCostsDue =
-      deliveryCostStats.value.nolonRest +
-      deliveryCostStats.value.nathriyatRest;
+      deliveryCostStats.value.nolonRest + deliveryCostStats.value.nathriyatRest;
     const grandDue = Number((supplierDue + deliveryCostsDue).toFixed(2));
     return {
-      kg,
-      ardab,
+      kg: purchaseTotals.value.kg,
+      ardab: purchaseTotals.value.ardab,
       avgPrice: purchasePriceStats.value.avgPrice,
       lastPrice: purchasePriceStats.value.lastPrice,
       costTotal: purchasePriceStats.value.costedTotal,
@@ -422,9 +638,10 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   /** Allow new transfer when purchase balance remains, or always allow commission */
   const canAddTransfer = computed(() => true);
 
-  /** Show «تسجيل تسليم» only when kg is still due */
-  const canAddDelivery = computed(
-    () => purchaseTotals.value.kg - deliveryTotals.value.kg > 0.001,
+  /** Show «تسجيل تسليم» only when selected product still has remaining kg */
+  const canAddDelivery = computed(() =>
+    !!selectedProductId.value
+    && remainingKgOfProduct(selectedProductId.value) > 0.001,
   );
 
   const paymentRemaining = computed(() => {
@@ -458,7 +675,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       needWarehouses
         ? client
             .from("warehouses")
-            .select("id, name")
+            .select("id, name, account_type_id")
             .eq("is_active", true)
             .order("name")
         : Promise.resolve({ data: warehouses.value, error: null }),
@@ -509,7 +726,26 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const openPurchaseCreate = () => {
     if (!ensureCanCreate()) return;
+    if (!products.value.length) {
+      toast.add({
+        title: "لا يوجد أصناف",
+        description: "أضف صنفاً قبل تسجيل شراء",
+        color: "warning",
+      });
+      return;
+    }
+    if (!selectedProductId.value) {
+      syncSelectedProduct();
+    }
+    if (!selectedProductId.value) {
+      toast.add({
+        title: "اختر الصنف أولاً",
+        color: "warning",
+      });
+      return;
+    }
     editingPurchase.value = null;
+    purchaseForm.product_id = selectedProductId.value;
     purchaseForm.purchase_date = todayIsoDate();
     purchaseForm.quantity_kg = "";
     purchaseForm.price_per_ardab = "";
@@ -519,6 +755,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const openPurchaseEdit = (row: SupplierPurchase) => {
     editingPurchase.value = row;
+    purchaseForm.product_id = row.product_id;
     purchaseForm.purchase_date = row.purchase_date;
     purchaseForm.quantity_kg = String(row.quantity_kg);
     purchaseForm.price_per_ardab = String(row.price_per_ardab);
@@ -531,6 +768,10 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const openTransferCreate = () => {
     if (!ensureCanCreate()) return;
+    if (!selectedProductId.value) {
+      toast.add({ title: "اختر الصنف أولاً", color: "warning" });
+      return;
+    }
     if (!canAddTransfer.value) {
       toast.add({ title: "لا يوجد مستحق للدفع", color: "warning" });
       return;
@@ -557,22 +798,30 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const openDeliveryCreate = async () => {
     if (!ensureCanCreate()) return;
+    if (!selectedProductId.value) {
+      toast.add({ title: "اختر الصنف أولاً", color: "warning" });
+      return;
+    }
     if (!canAddDelivery.value) {
-      toast.add({ title: "لا يوجد باقي كجم للتسليم", color: "warning" });
+      toast.add({
+        title: "لا يوجد باقي كجم لهذا الصنف",
+        description: "سجّل شراء لهذا الصنف أولاً أو اختر صنفاً آخر",
+        color: "warning",
+      });
       return;
     }
     if (!(await ensureWarehousesLoaded())) return;
-    if (!warehouses.value.length) {
+    if (!warehouseOptions.value.length) {
       toast.add({
-        title: "لا توجد شون",
-        description: "أضف شونة قبل تسجيل تسليم",
+        title: "لا توجد شون بنفس نوع المورد",
+        description: "أضف شونة بنفس نوع الحساب أولاً",
         color: "warning",
       });
       return;
     }
     editingDelivery.value = null;
-    deliveryForm.warehouse_id = warehouses.value[0]?.id || "";
-    syncSectionForWarehouse();
+    syncWarehouseForSupplierType();
+    deliveryForm.product_id = selectedProductId.value;
     deliveryForm.delivery_date = todayIsoDate();
     deliveryForm.quantity_kg = "";
     deliveryForm.nolon_total = "";
@@ -591,6 +840,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     deliveryForm.warehouse_id = row.warehouse_id;
     deliveryForm.section_id = row.section_id;
     syncSectionForWarehouse();
+    deliveryForm.product_id = row.product_id;
     deliveryForm.delivery_date = row.delivery_date;
     deliveryForm.quantity_kg = String(row.quantity_kg);
     deliveryForm.nolon_total = String(row.nolon_total ?? 0);
@@ -681,14 +931,14 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     payment: DeliveryCostPaymentLite,
   ) => {
     const ok = await askConfirm(
-      `حذف دفعة ${deliveryCostKindLabel(payment.kind)}؟`,
+      `حذف دفعة ${deliveryCostKindLabel(payment.kind)} نهائياً؟`,
     );
     if (!ok) return;
     saving.value = true;
     try {
       const { error } = await client
         .from("delivery_cost_payments")
-        .update({ is_cancelled: true })
+        .delete()
         .eq("id", payment.id);
       if (error) throw error;
       toast.add({ title: "تم حذف الدفعة", color: "success" });
@@ -702,8 +952,17 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const savePurchase = async () => {
     if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return;
+    const productId =
+      editingPurchase.value?.product_id
+      || selectedProductId.value
+      || purchaseForm.product_id;
+    purchaseForm.product_id = productId;
     const quantityKg = parseDecimal(purchaseForm.quantity_kg);
     const pricePerArdab = parseDecimal(purchaseForm.price_per_ardab);
+    if (!productId) {
+      toast.add({ title: "اختر الصنف", color: "warning" });
+      return;
+    }
     if (!purchaseForm.purchase_date) {
       toast.add({ title: "التاريخ مطلوب", color: "warning" });
       return;
@@ -720,6 +979,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: supplier.value.id,
+      product_id: purchaseForm.product_id,
       purchase_date: purchaseForm.purchase_date,
       quantity_kg: quantityKg,
       ardab: computedPurchaseArdab.value,
@@ -754,6 +1014,12 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const saveTransfer = async () => {
     if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return;
+    const productId =
+      editingTransfer.value?.product_id || selectedProductId.value;
+    if (!productId) {
+      toast.add({ title: "اختر الصنف أولاً", color: "warning" });
+      return;
+    }
     const amount = parseDecimal(transferForm.amount);
     if (!transferForm.transfer_date) {
       toast.add({ title: "التاريخ مطلوب", color: "warning" });
@@ -768,29 +1034,10 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       return;
     }
 
-    // تحويل: cannot exceed remaining purchase due
-    if (transferForm.kind === "transfer") {
-      let maxAllowed = Number(due.value?.balance ?? 0);
-      if (
-        editingTransfer.value &&
-        editingTransfer.value.kind !== "commission"
-      ) {
-        maxAllowed += Number(editingTransfer.value.amount);
-      }
-      maxAllowed = Number(maxAllowed.toFixed(2));
-      if (amount > maxAllowed + 0.001) {
-        toast.add({
-          title: "المبلغ أكبر من المستحق",
-          description: `المتبقي المتاح: ${maxAllowed.toFixed(2)} جنيه`,
-          color: "warning",
-        });
-        return;
-      }
-    }
-
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: supplier.value.id,
+      product_id: productId,
       transfer_date: transferForm.transfer_date,
       amount,
       kind: transferForm.kind,
@@ -823,9 +1070,32 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const saveDelivery = async () => {
     if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return;
+    const productId =
+      editingDelivery.value?.product_id
+      || selectedProductId.value
+      || deliveryForm.product_id;
+    deliveryForm.product_id = productId;
     const quantityKg = parseDecimal(deliveryForm.quantity_kg);
     if (!deliveryForm.warehouse_id) {
       toast.add({ title: "اختر الشونة", color: "warning" });
+      return;
+    }
+    const warehouse = warehouses.value.find(
+      (w) => w.id === deliveryForm.warehouse_id,
+    );
+    if (
+      warehouse
+      && supplier.value.account_type_id
+      && warehouse.account_type_id !== supplier.value.account_type_id
+    ) {
+      toast.add({
+        title: "نوع المورد يجب أن يطابق نوع الشونة",
+        color: "warning",
+      });
+      return;
+    }
+    if (!productId) {
+      toast.add({ title: "اختر الصنف", color: "warning" });
       return;
     }
     if (!deliveryForm.section_id) {
@@ -856,7 +1126,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     const maxKg = deliveryMaxKgAllowed.value;
     if (quantityKg > maxKg + 0.001) {
       toast.add({
-        title: "الكمية أكبر من المطلوب استلامه",
+        title: "الكمية أكبر من المطلوب استلامه لهذا الصنف",
         description: `المتبقي المتاح: ${maxKg.toFixed(2)} كجم`,
         color: "warning",
       });
@@ -889,11 +1159,27 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       return;
     }
 
+    const statusId =
+      editingDelivery.value
+      && editingDelivery.value.product_id === deliveryForm.product_id
+        ? editingDelivery.value.status_id
+        : await resolveStatusIdForProduct(deliveryForm.product_id);
+    if (!statusId) {
+      toast.add({
+        title: "تعذر تحديد حالة الصنف",
+        description: "أضف حالات من صفحة الصنف أولاً",
+        color: "warning",
+      });
+      return;
+    }
+
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: supplier.value.id,
       warehouse_id: deliveryForm.warehouse_id,
       section_id: deliveryForm.section_id,
+      product_id: deliveryForm.product_id,
+      status_id: statusId,
       delivery_date: deliveryForm.delivery_date,
       quantity_kg: quantityKg,
       ardab: computedDeliveryArdab.value,
@@ -915,7 +1201,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
       const { error: cancelError } = await client
         .from("delivery_cost_payments")
-        .update({ is_cancelled: true })
+        .delete()
         .eq("delivery_id", deliveryId)
         .eq("kind", kind)
         .eq("is_cancelled", false);
@@ -994,13 +1280,13 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   };
 
   const softDeletePurchase = async (row: SupplierPurchase) => {
-    const ok = await askConfirm("حذف عملية الشراء؟");
+    const ok = await askConfirm("حذف عملية الشراء نهائياً؟");
     if (!ok) return;
     saving.value = true;
     try {
       const { error } = await client
         .from("purchases")
-        .update({ is_cancelled: true })
+        .delete()
         .eq("id", row.id);
       if (error) throw error;
       toast.add({ title: "تم حذف الشراء", color: "success" });
@@ -1013,13 +1299,13 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   };
 
   const softDeleteTransfer = async (row: SupplierTransfer) => {
-    const ok = await askConfirm("حذف التحويل؟");
+    const ok = await askConfirm("حذف التحويل نهائياً؟");
     if (!ok) return;
     saving.value = true;
     try {
       const { error } = await client
         .from("cash_transfers")
-        .update({ is_cancelled: true })
+        .delete()
         .eq("id", row.id);
       if (error) throw error;
       toast.add({ title: "تم الحذف", color: "success" });
@@ -1032,13 +1318,13 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   };
 
   const softDeleteDelivery = async (row: SupplierDelivery) => {
-    const ok = await askConfirm("حذف التسليم؟");
+    const ok = await askConfirm("حذف التسليم نهائياً؟");
     if (!ok) return;
     saving.value = true;
     try {
       const { error } = await client
         .from("warehouse_deliveries")
-        .update({ is_cancelled: true })
+        .delete()
         .eq("id", row.id);
       if (error) throw error;
       toast.add({ title: "تم الحذف", color: "success" });
@@ -1054,7 +1340,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     if (!supplier.value) return;
     supplierEditForm.name = supplier.value.name;
     supplierEditForm.notes = supplier.value.notes || "";
-    supplierEditForm.account_type = supplier.value.account_type || "normal";
+    supplierEditForm.account_type_id = supplier.value.account_type_id;
     supplierEditModalOpen.value = true;
   };
 
@@ -1064,12 +1350,16 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       toast.add({ title: "الاسم مطلوب", color: "warning" });
       return;
     }
+    if (!supplierEditForm.account_type_id) {
+      toast.add({ title: "اختر نوع الحساب", color: "warning" });
+      return;
+    }
     saving.value = true;
     try {
       const payload = {
         name: supplierEditForm.name.trim(),
         notes: supplierEditForm.notes.trim() || null,
-        account_type: supplierEditForm.account_type,
+        account_type_id: supplierEditForm.account_type_id,
       };
       const { error } = await client
         .from("suppliers")
@@ -1095,11 +1385,11 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
     loading.value = true;
     try {
-      const [supplierRes, seasonRes, warehousesRes, sectionsRes] =
+      const [supplierRes, seasonRes, warehousesRes, sectionsRes, productsRes, statusesRes] =
         await Promise.all([
           client
             .from("suppliers")
-            .select("id, name, notes, is_active, account_type")
+            .select("id, name, notes, is_active, account_type_id, account_types(name)")
             .eq("id", id)
             .maybeSingle(),
           client
@@ -1109,7 +1399,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
             .maybeSingle(),
           client
             .from("warehouses")
-            .select("id, name")
+            .select("id, name, account_type_id")
             .eq("is_active", true)
             .order("name"),
           client
@@ -1117,23 +1407,53 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
             .select("id, name, warehouse_id")
             .eq("is_active", true)
             .order("name"),
+          client
+            .from("products")
+            .select("id, name")
+            .eq("is_active", true)
+            .order("name"),
+          client
+            .from("stock_statuses")
+            .select("id, name, product_id")
+            .eq("is_active", true)
+            .order("name"),
         ]);
       if (supplierRes.error) throw supplierRes.error;
       if (seasonRes.error) throw seasonRes.error;
       if (warehousesRes.error) throw warehousesRes.error;
       if (sectionsRes.error) throw sectionsRes.error;
+      if (productsRes.error) throw productsRes.error;
+      if (statusesRes.error) throw statusesRes.error;
 
-      supplier.value = supplierRes.data;
+      const rawSupplier = supplierRes.data as
+        | (Omit<SupplierLite, "account_type_name"> & {
+            account_types?: { name: string } | null
+          })
+        | null;
+      supplier.value = rawSupplier
+        ? {
+            id: rawSupplier.id,
+            name: rawSupplier.name,
+            notes: rawSupplier.notes,
+            is_active: rawSupplier.is_active,
+            account_type_id: rawSupplier.account_type_id,
+            account_type_name: rawSupplier.account_types?.name || "—",
+          }
+        : null;
       activeSeason.value = seasonRes.data;
       warehouses.value = warehousesRes.data ?? [];
       sections.value = sectionsRes.data ?? [];
+      products.value = productsRes.data ?? [];
+      stockStatuses.value = statusesRes.data ?? [];
 
       if (!supplierRes.data || !seasonRes.data) {
         due.value = null;
+        dueByProduct.value = [];
         purchases.value = [];
         transfers.value = [];
         deliveries.value = [];
         costPayments.value = [];
+        syncSelectedProduct();
         return;
       }
 
@@ -1161,7 +1481,9 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
             .order("created_at", { ascending: true }),
           client
             .from("warehouse_deliveries")
-            .select("*, warehouses(id, name), warehouse_sections(id, name, warehouse_id)")
+            .select(
+              "*, warehouses(id, name), warehouse_sections(id, name, warehouse_id), products(id, name), stock_statuses(id, name)",
+            )
             .eq("supplier_id", id)
             .eq("season_id", seasonId)
             .eq("is_cancelled", false)
@@ -1174,7 +1496,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       if (transfersRes.error) throw transfersRes.error;
       if (deliveriesRes.error) throw deliveriesRes.error;
 
-      due.value = dueRes.data?.[0] ?? null;
+      dueByProduct.value = dueRes.data ?? [];
       purchases.value = (purchasesRes.data ?? []) as SupplierPurchase[];
       transfers.value = transfersRes.data ?? [];
       deliveries.value = (deliveriesRes.data ?? []) as SupplierDelivery[];
@@ -1194,6 +1516,12 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       } else {
         costPayments.value = [];
       }
+
+      syncSelectedProduct();
+      due.value =
+        dueByProduct.value.find((r) => r.product_id === selectedProductId.value)
+        ?? dueByProduct.value[0]
+        ?? null;
     } catch (e: any) {
       toast.add({
         title: "تعذر تحميل كشف المورد",
@@ -1208,20 +1536,34 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   watch(
     () => toValue(supplierId),
     () => {
+      selectedProductId.value = "";
       void load();
     },
     { immediate: true },
   );
+
+  watch(selectedProductId, () => {
+    onSelectedProductChange();
+  });
 
   return {
     loading,
     saving,
     supplier,
     due,
+    dueByProduct,
+    ardabSummary,
     activeSeason,
     purchases,
+    filteredPurchases,
     transfers,
+    filteredTransfers,
     deliveries,
+    filteredDeliveries,
+    selectedProductId,
+    selectedProductName,
+    selectedProductRemainingKg,
+    onSelectedProductChange,
     purchaseInlineOpen,
     transferInlineOpen,
     deliveryInlineOpen,
@@ -1259,10 +1601,12 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     computedPurchaseTotal,
     computedDeliveryArdab,
     warehouseOptions,
+    productOptions,
+    deliveryProductOptions,
+    productNameOf,
     sectionOptions,
     onDeliveryWarehouseChange,
     transferKindOptions,
-    supplierAccountTypeOptions,
     transferKindLabel: (kind: TransferKind | string) => transferKindLabel(kind),
     deliveryCostKindLabel,
     nolonRestOf,

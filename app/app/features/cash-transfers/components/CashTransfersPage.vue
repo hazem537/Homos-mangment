@@ -12,6 +12,8 @@ const {
   summary,
   activeSeason,
   supplierOptions,
+  productOptions,
+  onSupplierChange,
   supplierDue,
   loadingDue,
   transferKindOptions,
@@ -92,20 +94,20 @@ const balanceColor = computed(() => {
       <UInput
         v-model="search"
         icon="i-lucide-search"
-        placeholder="بحث بالمورد أو البيان..."
+        placeholder="بحث بالمورد أو الصنف أو البيان..."
         class="max-w-md"
       />
     </div>
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
-        <TableSkeleton :cols="6" />
+        <TableSkeleton :cols="7" />
       </div>
       <div v-else-if="!activeSeason" class="p-6 text-center text-muted">
         لا يوجد موسم نشط — من شاشة المواسم فعّل موسماً أولاً.
       </div>
       <div v-else class="overflow-x-auto">
-        <table dir="rtl" class="w-full text-sm min-w-[640px] text-center">
+        <table dir="rtl" class="w-full text-sm min-w-[720px] text-center">
           <thead class="bg-elevated/60 text-muted">
             <tr>
               <th class="p-3 font-medium w-28">
@@ -119,6 +121,9 @@ const balanceColor = computed(() => {
               </th>
               <th class="p-3 font-medium">
                 النوع
+              </th>
+              <th class="p-3 font-medium">
+                الصنف
               </th>
               <th class="p-3 font-medium">
                 المورد
@@ -152,7 +157,7 @@ const balanceColor = computed(() => {
                   />
                 </div>
               </td>
-              <td class="p-3 text-muted">
+              <td class="max-w-[16rem] p-3 text-start text-muted whitespace-normal break-words">
                 {{ row.notes || '—' }}
               </td>
               <td class="p-3" dir="ltr">
@@ -166,6 +171,9 @@ const balanceColor = computed(() => {
                   {{ transferKindLabel(row.kind) }}
                 </UBadge>
               </td>
+              <td class="p-3">
+                {{ row.products?.name || '—' }}
+              </td>
               <td class="p-3 font-medium">
                 {{ row.suppliers?.name || '—' }}
               </td>
@@ -174,7 +182,7 @@ const balanceColor = computed(() => {
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="6" class="p-6 text-center text-muted">
+              <td colspan="7" class="p-6 text-center text-muted">
                 لا توجد تحويلات في هذا الموسم بعد
               </td>
             </tr>
@@ -193,13 +201,24 @@ const balanceColor = computed(() => {
               value-key="value"
               label-key="label"
               class="w-full"
+              @update:model-value="onSupplierChange"
+            />
+          </UFormField>
+          <UFormField label="الصنف" required>
+            <USelect
+              v-model="form.product_id"
+              :items="productOptions"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+              :placeholder="productOptions.length ? 'اختر الصنف' : 'لا توجد أصناف'"
             />
           </UFormField>
           <div
-            v-if="form.supplier_id"
+            v-if="form.supplier_id && form.product_id"
             class="rounded-lg bg-elevated/60 px-3 py-2 text-sm flex flex-wrap items-center gap-2"
           >
-            <span class="text-muted">المستحق لهذا المورد:</span>
+            <span class="text-muted">المستحق لهذا المورد × الصنف:</span>
             <USkeleton v-if="loadingDue" class="h-5 w-28 rounded" />
             <UBadge
               v-else-if="supplierDue !== null"

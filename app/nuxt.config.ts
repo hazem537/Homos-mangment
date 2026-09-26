@@ -24,6 +24,7 @@ export default defineNuxtConfig({
     { path: '~/features/auth/components', pathPrefix: false },
     { path: '~/features/dashboard/components', pathPrefix: false },
     { path: '~/features/suppliers/components', pathPrefix: false },
+    { path: '~/features/supplier-stats/components', pathPrefix: false },
     { path: '~/features/purchases/components', pathPrefix: false },
     { path: '~/features/cash-transfers/components', pathPrefix: false },
     { path: '~/features/deliveries/components', pathPrefix: false },
@@ -31,6 +32,8 @@ export default defineNuxtConfig({
     { path: '~/features/stores/components', pathPrefix: false },
     { path: '~/features/meklas/components', pathPrefix: false },
     { path: '~/features/clients/components', pathPrefix: false },
+    { path: '~/features/products/components', pathPrefix: false },
+    { path: '~/features/stock-statuses/components', pathPrefix: false },
     { path: '~/features/seasons/components', pathPrefix: false }
   ],
 

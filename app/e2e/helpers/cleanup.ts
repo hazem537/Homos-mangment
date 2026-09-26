@@ -12,6 +12,8 @@ type Table =
   | 'meklas'
   | 'clients'
   | 'stock_movements'
+  | 'products'
+  | 'stock_statuses'
 
 function supabaseConfig() {
   const url = process.env.NUXT_PUBLIC_SUPABASE_URL || process.env.E2E_SUPABASE_URL
@@ -217,6 +219,8 @@ export async function cleanupE2eLeftovers(request: APIRequestContext, accessToke
   await deleteByFilter(request, 'stores', `name=like.${encodeURIComponent('*مخزن-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'meklas', `name=like.${encodeURIComponent('*مقلى-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'clients', `name=like.${encodeURIComponent('*عميل-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'products', `name=like.${encodeURIComponent('*صنف-e2e-*')}`, accessToken)
+  await deleteByFilter(request, 'stock_statuses', `name=like.${encodeURIComponent('*حالة-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'seasons', `name=like.${encodeURIComponent('*موسم اختبار*')}`, accessToken)
   await deleteByFilter(request, 'seasons', 'year=gte.2100', accessToken)
 }

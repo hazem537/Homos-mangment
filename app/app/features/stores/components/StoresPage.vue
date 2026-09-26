@@ -42,14 +42,20 @@ const {
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
-        <TableSkeleton :cols="3" />
+        <TableSkeleton :cols="5" />
       </div>
       <div v-else class="overflow-x-auto">
-        <table dir="rtl" class="w-full text-sm min-w-[520px] text-center">
+        <table dir="rtl" class="w-full text-sm min-w-[620px] text-center">
           <thead class="bg-elevated/60 text-muted">
             <tr>
               <th class="p-3 font-medium">
                 الاسم
+              </th>
+              <th class="p-3 font-medium">
+                الصنف
+              </th>
+              <th class="p-3 font-medium">
+                حالة
               </th>
               <th class="p-3 font-medium">
                 الرصيد (كجم)
@@ -62,7 +68,7 @@ const {
           <tbody>
             <tr
               v-for="row in filtered"
-              :key="row.store_id"
+              :key="`${row.store_id}-${row.product_id || 'none'}-${row.status_id || 'none'}`"
               class="border-t border-default"
             >
               <td class="p-3 font-medium">
@@ -70,6 +76,12 @@ const {
                 <p v-if="row.notes" class="text-xs text-muted font-normal mt-0.5">
                   {{ row.notes }}
                 </p>
+              </td>
+              <td class="p-3">
+                {{ row.product_name || '—' }}
+              </td>
+              <td class="p-3">
+                {{ row.status_name || '—' }}
               </td>
               <td class="p-3" dir="ltr">
                 {{ formatNumber(row.kg_total) }}
@@ -94,7 +106,7 @@ const {
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="3" class="p-6 text-center text-muted">
+              <td colspan="5" class="p-6 text-center text-muted">
                 لا توجد مخازن
               </td>
             </tr>

@@ -29,13 +29,42 @@ export function useClients() {
   const sections = ref<{ id: string, name: string, warehouse_name: string }[]>([])
   const stores = ref<{ id: string, name: string }[]>([])
   const meklas = ref<{ id: string, name: string }[]>([])
+  const products = ref<{ id: string, name: string }[]>([])
+  const statuses = ref<{ id: string, name: string, product_id: string }[]>([])
   const issueForm = reactive({
     from_kind: 'section' as FromKind,
     from_id: '' as string,
+    product_id: '' as string,
+    status_id: '' as string,
     quantity_kg: '' as string,
     movement_date: todayIsoDate(),
     notes: ''
   })
+
+  const productOptions = computed(() =>
+    products.value.map(p => ({ label: p.name, value: p.id }))
+  )
+
+  const statusOptions = computed(() =>
+    statuses.value
+      .filter(s => s.product_id === issueForm.product_id)
+      .map(s => ({ label: s.name, value: s.id }))
+  )
+
+  const syncStatusForProduct = () => {
+    const options = statusOptions.value
+    if (!options.length) {
+      issueForm.status_id = ''
+      return
+    }
+    if (!options.some(o => o.value === issueForm.status_id)) {
+      issueForm.status_id = options[0]?.value || ''
+    }
+  }
+
+  const onIssueProductChange = () => {
+    syncStatusForProduct()
+  }
 
   const filtered = computed(() => {
     const q = search.value.trim()
@@ -121,11 +150,12 @@ export function useClients() {
   }
 
   const softDelete = async (row: ClientRow) => {
-    const ok = await askConfirm(`حذف العميل «${row.name}»؟`)
+    const ok = await askConfirm(`حذف العميل «${row.name}» نهائياً؟`)
     if (!ok) return
     saving.value = true
     try {
-      const { error } = await client.from('clients').update({ is_active: false }).eq('id', row.id)
+      await client.from('stock_movements').delete().eq('to_kind', 'client').eq('to_id', row.id)
+      const { error } = await client.from('clients').delete().eq('id', row.id)
       if (error) throw error
       toast.add({ title: 'تم حذف العميل', color: 'success' })
       await load()
@@ -137,18 +167,22 @@ export function useClients() {
   }
 
   const loadIssueSources = async () => {
-    const [secRes, storesRes, meklasRes] = await Promise.all([
+    const [secRes, storesRes, meklasRes, productsRes, statusesRes] = await Promise.all([
       client
         .from('warehouse_sections')
         .select('id, name, warehouses(name)')
         .eq('is_active', true)
         .order('name'),
       client.from('stores').select('id, name').eq('is_active', true).order('name'),
-      client.from('meklas').select('id, name').eq('is_active', true).order('name')
+      client.from('meklas').select('id, name').eq('is_active', true).order('name'),
+      client.from('products').select('id, name').eq('is_active', true).order('name'),
+      client.from('stock_statuses').select('id, name, product_id').eq('is_active', true).order('name')
     ])
     if (secRes.error) throw secRes.error
     if (storesRes.error) throw storesRes.error
     if (meklasRes.error) throw meklasRes.error
+    if (productsRes.error) throw productsRes.error
+    if (statusesRes.error) throw statusesRes.error
 
     sections.value = (secRes.data ?? []).map((s: any) => ({
       id: s.id,
@@ -157,6 +191,8 @@ export function useClients() {
     }))
     stores.value = storesRes.data ?? []
     meklas.value = meklasRes.data ?? []
+    products.value = productsRes.data ?? []
+    statuses.value = statusesRes.data ?? []
   }
 
   const onIssueKindChange = () => {
@@ -178,6 +214,10 @@ export function useClients() {
       toast.add({ title: 'لا توجد مواقع للصرف منها', color: 'warning' })
       return
     }
+    if (!products.value.length) {
+      toast.add({ title: 'لا توجد أصناف', description: 'أضف صنفاً من شاشة أصناف الحمص أولاً', color: 'warning' })
+      return
+    }
     issueClient.value = row
     issueForm.from_kind = sections.value.length
       ? 'section'
@@ -186,6 +226,16 @@ export function useClients() {
         : 'mekla'
     issueForm.from_id = ''
     onIssueKindChange()
+    issueForm.product_id = products.value[0]?.id || ''
+    syncStatusForProduct()
+    if (!statusOptions.value.length) {
+      toast.add({
+        title: 'لا توجد حالات لهذا الصنف',
+        description: 'أضف حالات من صفحة الصنف أولاً',
+        color: 'warning'
+      })
+      return
+    }
     issueForm.quantity_kg = ''
     issueForm.movement_date = todayIsoDate()
     issueForm.notes = ''
@@ -199,6 +249,14 @@ export function useClients() {
       toast.add({ title: 'اختر المصدر', color: 'warning' })
       return
     }
+    if (!issueForm.product_id) {
+      toast.add({ title: 'اختر الصنف', color: 'warning' })
+      return
+    }
+    if (!issueForm.status_id) {
+      toast.add({ title: 'اختر الحالة', color: 'warning' })
+      return
+    }
     if (!(qty > 0)) {
       toast.add({ title: 'الكمية يجب أن تكون أكبر من صفر', color: 'warning' })
       return
@@ -207,6 +265,8 @@ export function useClients() {
     const { data: remaining, error: remError } = await client.rpc('location_remaining_kg', {
       p_kind: issueForm.from_kind,
       p_id: issueForm.from_id,
+      p_product_id: issueForm.product_id,
+      p_status_id: issueForm.status_id,
       p_season_id: activeSeasonId.value
     })
     if (remError) {
@@ -226,6 +286,8 @@ export function useClients() {
     try {
       const { error } = await client.from('stock_movements').insert({
         season_id: activeSeasonId.value,
+        product_id: issueForm.product_id,
+        status_id: issueForm.status_id,
         movement_date: issueForm.movement_date,
         quantity_kg: qty,
         from_kind: issueForm.from_kind,
@@ -258,12 +320,15 @@ export function useClients() {
     issueClient,
     issueForm,
     issueFromOptions,
+    productOptions,
+    statusOptions,
     openCreate,
     openEdit,
     save,
     softDelete,
     openIssue,
     onIssueKindChange,
+    onIssueProductChange,
     saveIssue,
     setIssueQty: (raw: string) => {
       issueForm.quantity_kg = normalizeDecimalInput(raw)

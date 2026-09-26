@@ -1,5 +1,4 @@
-import type { Database, SupplierAccountType } from '~/types/database.types'
-import { supplierAccountTypeOptions } from '~/utils/supplierAccountType'
+import type { Database } from '~/types/database.types'
 
 export type SupplierBalance = Database['public']['Functions']['supplier_balances']['Returns'][number]
 
@@ -7,26 +6,48 @@ export function useSuppliers() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()
   const { confirm: askConfirm } = useConfirmDialog()
+  const { loadTypes, ensureDefaultTypeId } = useAccountTypes()
 
   const loading = ref(true)
   const saving = ref(false)
   const suppliers = ref<SupplierBalance[]>([])
   const activeSeasonName = ref<string | null>(null)
   const search = ref('')
+  const selectedProductId = ref('all')
   const modalOpen = ref(false)
   const editing = ref<SupplierBalance | null>(null)
 
   const form = reactive({
     name: '',
     notes: '',
-    account_type: 'normal' as SupplierAccountType
+    account_type_id: '' as string
+  })
+
+  const productOptions = computed(() => {
+    const map = new Map<string, string>()
+    for (const s of suppliers.value) {
+      if (s.product_id && s.product_name) map.set(s.product_id, s.product_name)
+    }
+    return [
+      { label: 'كل الأصناف', value: 'all' },
+      ...[...map.entries()]
+        .sort((a, b) => a[1].localeCompare(b[1], 'ar'))
+        .map(([value, label]) => ({ label, value }))
+    ]
   })
 
   const filtered = computed(() => {
+    let rows = suppliers.value
+    if (selectedProductId.value && selectedProductId.value !== 'all') {
+      rows = rows.filter(s => s.product_id === selectedProductId.value)
+    }
     const q = search.value.trim()
-    if (!q) return suppliers.value
-    return suppliers.value.filter(s =>
-      s.supplier_name.includes(q) || (s.notes || '').includes(q)
+    if (!q) return rows
+    return rows.filter(s =>
+      s.supplier_name.includes(q)
+      || (s.notes || '').includes(q)
+      || (s.product_name || '').includes(q)
+      || (s.account_type_name || '').includes(q)
     )
   })
 
@@ -35,7 +56,8 @@ export function useSuppliers() {
     try {
       const [seasonRes, balancesRes] = await Promise.all([
         client.from('seasons').select('name').eq('is_active', true).maybeSingle(),
-        client.rpc('supplier_balances')
+        client.rpc('supplier_balances'),
+        loadTypes()
       ])
       if (balancesRes.error) throw balancesRes.error
       activeSeasonName.value = seasonRes.data?.name ?? null
@@ -47,11 +69,12 @@ export function useSuppliers() {
     }
   }
 
-  const openCreate = () => {
+  const openCreate = async () => {
     editing.value = null
     form.name = ''
     form.notes = ''
-    form.account_type = 'normal'
+    await loadTypes()
+    form.account_type_id = ensureDefaultTypeId()
     modalOpen.value = true
   }
 
@@ -59,7 +82,7 @@ export function useSuppliers() {
     editing.value = row
     form.name = row.supplier_name
     form.notes = row.notes || ''
-    form.account_type = row.account_type || 'normal'
+    form.account_type_id = row.account_type_id
     modalOpen.value = true
   }
 
@@ -68,12 +91,16 @@ export function useSuppliers() {
       toast.add({ title: 'الاسم مطلوب', color: 'warning' })
       return
     }
+    if (!form.account_type_id) {
+      toast.add({ title: 'اختر نوع الحساب', color: 'warning' })
+      return
+    }
     saving.value = true
     try {
       const payload = {
         name: form.name.trim(),
         notes: form.notes.trim() || null,
-        account_type: form.account_type,
+        account_type_id: form.account_type_id,
         is_active: true
       }
       if (editing.value) {
@@ -95,11 +122,13 @@ export function useSuppliers() {
   }
 
   const softDelete = async (row: SupplierBalance) => {
-    const ok = await askConfirm(`حذف المورد «${row.supplier_name}»؟`)
+    const ok = await askConfirm(
+      `حذف المورد «${row.supplier_name}» نهائياً؟\nسيتم حذف مشترياته وتحويلاته وتسليماته.`
+    )
     if (!ok) return
     saving.value = true
     try {
-      const { error } = await client.from('suppliers').update({ is_active: false }).eq('id', row.supplier_id)
+      const { error } = await client.from('suppliers').delete().eq('id', row.supplier_id)
       if (error) throw error
       toast.add({ title: 'تم حذف المورد', color: 'success' })
       await load()
@@ -116,11 +145,12 @@ export function useSuppliers() {
     loading,
     saving,
     search,
+    selectedProductId,
+    productOptions,
     modalOpen,
     form,
     filtered,
     activeSeasonName,
-    supplierAccountTypeOptions,
     openCreate,
     openEdit,
     save,

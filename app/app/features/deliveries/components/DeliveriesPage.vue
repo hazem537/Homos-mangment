@@ -13,6 +13,10 @@ const {
   activeSeason,
   supplierOptions,
   warehouseOptions,
+  productOptions,
+  deliveryMaxKgAllowed,
+  onSupplierChange,
+  onWarehouseChange,
   computedArdab,
   expandedDeliveryId,
   paymentModalOpen,
@@ -110,20 +114,20 @@ const {
       <UInput
         v-model="search"
         icon="i-lucide-search"
-        placeholder="بحث بالمورد أو الشونة أو السيارة..."
+        placeholder="بحث بالمورد أو الشونة أو الصنف أو السيارة..."
         class="max-w-md"
       />
     </div>
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
-        <TableSkeleton :cols="8" />
+        <TableSkeleton :cols="9" />
       </div>
       <div v-else-if="!activeSeason" class="p-6 text-center text-muted">
         لا يوجد موسم نشط — من شاشة المواسم فعّل موسماً أولاً.
       </div>
       <div v-else class="overflow-x-auto">
-        <table dir="rtl" class="w-full text-sm min-w-[1100px] text-center">
+        <table dir="rtl" class="w-full text-sm min-w-[1200px] text-center">
           <thead class="bg-elevated/60 text-muted">
             <tr>
               <th class="p-3 font-medium w-10" />
@@ -135,6 +139,9 @@ const {
               </th>
               <th class="p-3 font-medium">
                 الشونة
+              </th>
+              <th class="p-3 font-medium">
+                الصنف
               </th>
               <th class="p-3 font-medium">
                 كجم
@@ -182,6 +189,9 @@ const {
                 </td>
                 <td class="p-3">
                   {{ row.warehouses?.name || '—' }}
+                </td>
+                <td class="p-3">
+                  {{ row.products?.name || '—' }}
                 </td>
                 <td class="p-3" dir="ltr">
                   {{ formatNumber(row.quantity_kg) }}
@@ -245,7 +255,7 @@ const {
                 </td>
               </tr>
               <tr v-if="expandedDeliveryId === row.id" class="bg-elevated/30">
-                <td colspan="12" class="p-3 text-start">
+                <td colspan="14" class="p-3 text-start">
                   <div class="space-y-2">
                     <p class="text-sm font-medium text-highlighted">
                       دفعات هذه النقلة
@@ -311,7 +321,7 @@ const {
               </tr>
             </template>
             <tr v-if="!filtered.length">
-              <td colspan="12" class="p-6 text-center text-muted">
+              <td colspan="14" class="p-6 text-center text-muted">
                 لا توجد تسليمات في هذا الموسم بعد
               </td>
             </tr>
@@ -330,6 +340,7 @@ const {
               value-key="value"
               label-key="label"
               class="w-full"
+              @update:model-value="onSupplierChange"
             />
           </UFormField>
           <UFormField label="الشونة" required>
@@ -339,6 +350,17 @@ const {
               value-key="value"
               label-key="label"
               class="w-full"
+              @update:model-value="onWarehouseChange"
+            />
+          </UFormField>
+          <UFormField label="الصنف" required>
+            <USelect
+              v-model="form.product_id"
+              :items="productOptions"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+              :placeholder="productOptions.length ? 'اختر الصنف' : 'لا يوجد شراء لهذا المورد'"
             />
           </UFormField>
           <UFormField label="التاريخ" required>
@@ -349,8 +371,14 @@ const {
               :model-value="form.quantity_kg"
               placeholder="مثال: 170,5"
               suffix="كجم"
+              :title="`الحد الأقصى لهذا الصنف: ${formatNumber(deliveryMaxKgAllowed)} كجم`"
               @update:model-value="setDecimalField('quantity_kg', $event)"
             />
+            <p class="text-xs text-muted mt-1">
+              المتبقي لهذا الصنف:
+              <span dir="ltr" class="font-medium">{{ formatNumber(deliveryMaxKgAllowed) }}</span>
+              كجم
+            </p>
           </UFormField>
           <p class="text-sm text-muted">
             الأردب المحسوب:

@@ -11,12 +11,15 @@ const {
   issueClient,
   issueForm,
   issueFromOptions,
+  productOptions,
+  statusOptions,
   openCreate,
   openEdit,
   save,
   softDelete,
   openIssue,
   onIssueKindChange,
+  onIssueProductChange,
   saveIssue,
   setIssueQty
 } = useClients()
@@ -162,6 +165,25 @@ const fromKindOptions = [
             <USelect
               v-model="issueForm.from_id"
               :items="issueFromOptions"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="الصنف" required>
+            <USelect
+              v-model="issueForm.product_id"
+              :items="productOptions"
+              value-key="value"
+              label-key="label"
+              class="w-full"
+              @update:model-value="onIssueProductChange"
+            />
+          </UFormField>
+          <UFormField label="الحالة" required>
+            <USelect
+              v-model="issueForm.status_id"
+              :items="statusOptions"
               value-key="value"
               label-key="label"
               class="w-full"
