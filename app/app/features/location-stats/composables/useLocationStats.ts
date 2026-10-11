@@ -94,6 +94,10 @@ export function useLocationStats() {
     default: () => '0',
     ...cookieOpts
   })
+  const ardabPrice = useCookie<string>('homos-loc-stats-ardab-price', {
+    default: () => '',
+    ...cookieOpts
+  })
 
   const readEnabled = (raw: string | null | undefined) =>
     raw === '1' || raw === 'true'
@@ -159,8 +163,8 @@ export function useLocationStats() {
   const kindOptions: { label: string, value: LocationKindFilter }[] = [
     { label: 'الكل', value: 'all' },
     { label: 'الشون', value: 'warehouse' },
-    { label: 'المخازن', value: 'store' },
-    { label: 'المقالي', value: 'mekla' }
+    { label: 'المقالي', value: 'mekla' },
+    { label: 'المخازن', value: 'store' }
   ]
 
   const accountTypeOptions = computed(() => [
@@ -226,7 +230,7 @@ export function useLocationStats() {
   })
 
   const kindTotals = computed<LocationKindTotals[]>(() => {
-    const kinds: LocationStatsRow['kind'][] = ['warehouse', 'store', 'mekla']
+    const kinds: LocationStatsRow['kind'][] = ['warehouse', 'mekla', 'store']
     const labels = { warehouse: 'الشون', store: 'المخازن', mekla: 'المقالي' } as const
     const productFilter = selectedProductId.value
 
@@ -288,12 +292,18 @@ export function useLocationStats() {
   const totals = computed(() => {
     const list = filteredRows.value
     const ids = new Set(list.map(r => `${r.kind}:${r.id}`))
+    const net_kg = round2(list.reduce((s, r) => s + r.net_kg, 0))
+    const net_ardab = round4(list.reduce((s, r) => s + r.net_ardab, 0))
+    const price = parseDecimal(ardabPrice.value || '0')
+    const total_price = round2(net_ardab * price)
     return {
       kg_total: round2(list.reduce((s, r) => s + r.kg_total, 0)),
       ardab_total: round4(list.reduce((s, r) => s + r.ardab_total, 0)),
       waste_kg: round2(list.reduce((s, r) => s + r.waste_kg, 0)),
-      net_kg: round2(list.reduce((s, r) => s + r.net_kg, 0)),
-      net_ardab: round4(list.reduce((s, r) => s + r.net_ardab, 0)),
+      net_kg,
+      net_ardab,
+      ardab_price: price,
+      total_price,
       locations_count: ids.size,
       sold_kg: filteredSoldKg.value
     }
@@ -305,6 +315,10 @@ export function useLocationStats() {
 
   const setMeklaWasteRatio = (raw: string) => {
     meklaWasteRatio.value = normalizeDecimalInput(raw)
+  }
+
+  const setArdabPrice = (raw: string) => {
+    ardabPrice.value = normalizeDecimalInput(raw)
   }
 
   const syncQuery = () => {
@@ -508,8 +522,10 @@ export function useLocationStats() {
     warehouseWasteRatio,
     meklaWasteEnabled,
     meklaWasteRatio,
+    ardabPrice,
     setWarehouseWasteRatio,
     setMeklaWasteRatio,
+    setArdabPrice,
     load
   }
 }

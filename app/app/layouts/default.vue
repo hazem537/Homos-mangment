@@ -48,7 +48,7 @@ const links = [
     to: '/location-stats'
   },
   {
-    label: 'أصناف الحمص',
+    label: 'أصناف',
     icon: 'i-lucide-wheat',
     to: '/products'
   },

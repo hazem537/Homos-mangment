@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { formatNumber } from '~/utils/formatNumber'
+import {
+  formatCompactMoney,
+  formatCompactNumber,
+  formatMoney,
+  formatNumber
+} from '~/utils/formatNumber'
 import { accountTypeLabel } from '~/utils/accountType'
 import type { LocationStatsDisplayRow } from '../composables/useLocationStats'
 
@@ -22,11 +27,13 @@ const {
   warehouseWasteRatio,
   meklaWasteEnabled,
   meklaWasteRatio,
+  ardabPrice,
   setWarehouseWasteRatio,
-  setMeklaWasteRatio
+  setMeklaWasteRatio,
+  setArdabPrice
 } = useLocationStats()
 
-const cellClass = 'p-2 whitespace-nowrap tabular-nums text-end'
+const cellClass = 'max-w-[9.5rem] truncate p-2 whitespace-nowrap tabular-nums text-end'
 const thClass = 'p-2 font-medium whitespace-nowrap'
 
 function kindBadgeColor(kind: LocationStatsDisplayRow['kind']) {
@@ -112,13 +119,13 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
     </UCard>
 
     <template v-else>
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="grid grid-cols-3 gap-3 xl:grid-cols-4">
         <div
           v-for="card in kindTotals"
           :key="card.kind"
           role="button"
           tabindex="0"
-          class="group relative overflow-hidden rounded-xl border p-4 flex flex-col gap-3 transition-all duration-200 cursor-pointer"
+          class="group relative overflow-hidden rounded-xl border p-3 sm:p-4 flex flex-col gap-3 transition-all duration-200 cursor-pointer"
           :class="[
             selectedKind === card.kind
               ? 'border-primary/50 bg-primary/5 shadow-sm ring-1 ring-primary/20 opacity-100'
@@ -139,23 +146,25 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
             }"
           />
 
-          <div>
+          <div class="min-w-0">
             <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               <p class="text-xs font-medium tracking-wide text-muted">
                 {{ card.label }}
               </p>
-              <div class="flex flex-wrap items-center gap-x-1.5 text-xs text-muted tabular-nums">
-                <span dir="ltr">
-                  {{ formatNumber(card.waste_enabled ? card.net_ardab : card.ardab_total) }} أردب
-                </span>
-                <span class="opacity-40">
-                  ·
-                </span>
-                <span>{{ card.locations_count }} موقع</span>
-              </div>
+              <span
+                class="truncate text-xs text-muted tabular-nums"
+                dir="ltr"
+                :title="`${formatNumber(card.waste_enabled ? card.net_ardab : card.ardab_total)} أردب`"
+              >
+                {{ formatCompactNumber(card.waste_enabled ? card.net_ardab : card.ardab_total) }} أردب
+              </span>
             </div>
-            <p class="mt-2 text-2xl font-semibold tracking-tight tabular-nums text-highlighted" dir="ltr">
-              {{ formatNumber(card.waste_enabled ? card.net_kg : card.kg_total) }}
+            <p
+              class="mt-2 truncate text-xl font-semibold tracking-tight tabular-nums text-highlighted sm:text-2xl"
+              dir="ltr"
+              :title="`${formatNumber(card.waste_enabled ? card.net_kg : card.kg_total)} كجم`"
+            >
+              {{ formatCompactNumber(card.waste_enabled ? card.net_kg : card.kg_total) }}
               <span class="text-sm font-normal text-muted">
                 كجم
               </span>
@@ -185,10 +194,11 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
               placeholder="0"
               class="min-w-0 flex-1"
               :ui="{ base: 'tabular-nums text-center' }"
+              :class="!warehouseWasteEnabled && 'opacity-40'"
               @update:model-value="setWarehouseWasteRatio(String($event ?? ''))"
             />
             <span
-              class="shrink-0 text-sm font-medium tabular-nums text-muted"
+              class="shrink-0 text-xs text-muted"
               :class="!warehouseWasteEnabled && 'opacity-40'"
             >
               %
@@ -203,7 +213,7 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
             <USwitch
               v-model="meklaWasteEnabled"
               size="lg"
-              color="warning"
+              color="secondary"
             />
             <span class="shrink-0 text-xs font-medium text-muted">
               هدر
@@ -217,10 +227,11 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
               placeholder="0"
               class="min-w-0 flex-1"
               :ui="{ base: 'tabular-nums text-center' }"
+              :class="!meklaWasteEnabled && 'opacity-40'"
               @update:model-value="setMeklaWasteRatio(String($event ?? ''))"
             />
             <span
-              class="shrink-0 text-sm font-medium tabular-nums text-muted"
+              class="shrink-0 text-xs text-muted"
               :class="!meklaWasteEnabled && 'opacity-40'"
             >
               %
@@ -231,44 +242,85 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
         <div
           role="button"
           tabindex="0"
-          class="relative overflow-hidden rounded-xl border border-primary/35 bg-gradient-to-b from-primary/10 to-primary/5 p-4 flex flex-col shadow-sm transition-all duration-200 cursor-pointer"
+          class="col-span-3 xl:col-span-1 relative overflow-hidden rounded-2xl border-2 border-primary/40 bg-gradient-to-br from-primary/15 via-primary/8 to-elevated/40 p-5 flex flex-col gap-4 shadow-md transition-all duration-200 cursor-pointer"
           :class="selectedKind === 'all'
-            ? 'opacity-100 ring-1 ring-primary/20'
+            ? 'opacity-100 ring-2 ring-primary/25'
             : 'opacity-40 hover:opacity-70'"
           @click="selectedKind = 'all'"
           @keydown.enter.prevent="selectedKind = 'all'"
           @keydown.space.prevent="selectedKind = 'all'"
         >
-          <div class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-primary/80" />
-          <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-            <p class="text-xs font-medium tracking-wide text-muted">
-              الإجمالي الصافي
-            </p>
-            <div class="flex flex-wrap items-center gap-x-1.5 text-xs text-muted tabular-nums">
-              <span dir="ltr">
-                {{ formatNumber(totals.net_ardab) }} أردب
+          <div class="pointer-events-none absolute -start-8 -top-8 size-28 rounded-full bg-primary/10 blur-2xl" />
+          <div class="pointer-events-none absolute -end-6 -bottom-6 size-24 rounded-full bg-primary/10 blur-2xl" />
+
+          <div class="relative min-w-0">
+            <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+              <p class="text-sm font-semibold tracking-wide text-highlighted">
+                الإجمالي الصافي
+              </p>
+              <span
+                class="truncate text-sm text-muted tabular-nums"
+                dir="ltr"
+                :title="`${formatNumber(totals.net_ardab)} أردب`"
+              >
+                {{ formatCompactNumber(totals.net_ardab) }} أردب
               </span>
-              <span class="opacity-40">
-                ·
-              </span>
-              <span>{{ totals.locations_count }} موقع</span>
             </div>
-          </div>
-          <p class="mt-2 text-2xl font-semibold tracking-tight tabular-nums text-highlighted" dir="ltr">
-            {{ formatNumber(totals.net_kg) }}
-            <span class="text-sm font-normal text-muted">
-              كجم
-            </span>
-          </p>
-          <div
-            v-if="totals.waste_kg > 0"
-            class="mt-auto pt-3"
-          >
             <p
-              class="inline-flex w-fit items-center rounded-md bg-warning/10 px-2 py-0.5 text-xs text-warning tabular-nums"
+              class="mt-3 truncate text-3xl font-bold tracking-tight tabular-nums text-highlighted sm:text-4xl"
               dir="ltr"
+              :title="`${formatNumber(totals.net_kg)} كجم`"
             >
-              إجمالي الهدر {{ formatNumber(totals.waste_kg) }} كجم
+              {{ formatCompactNumber(totals.net_kg) }}
+              <span class="text-lg font-medium text-muted">
+                كجم
+              </span>
+            </p>
+          </div>
+
+          <div
+            class="relative z-10 mt-auto space-y-3"
+            @click.stop
+          >
+            <div class="flex items-center gap-3 rounded-xl border border-primary/25 bg-default/80 px-3.5 py-3 shadow-sm backdrop-blur-sm">
+              <span class="shrink-0 text-sm font-semibold text-muted">
+                سعر الأردب
+              </span>
+              <UInput
+                :model-value="ardabPrice"
+                inputmode="decimal"
+                dir="ltr"
+                size="lg"
+                placeholder="0"
+                class="min-w-0 flex-1"
+                :ui="{ base: 'tabular-nums text-center text-base font-semibold' }"
+                @update:model-value="setArdabPrice(String($event ?? ''))"
+              />
+              <span class="shrink-0 text-sm text-muted">
+                جنيه
+              </span>
+            </div>
+
+            <div class="rounded-xl border border-primary/20 bg-primary/10 px-3.5 py-3">
+              <p class="text-sm font-medium text-muted">
+                قيمة المخزون
+              </p>
+              <p
+                class="mt-1 truncate text-xl font-bold tracking-tight tabular-nums text-primary sm:text-2xl"
+                dir="ltr"
+                :title="formatMoney(totals.total_price)"
+              >
+                {{ formatCompactMoney(totals.total_price) }}
+              </p>
+            </div>
+
+            <p
+              v-if="totals.waste_kg > 0"
+              class="inline-flex w-fit max-w-full items-center truncate rounded-lg bg-warning/10 px-2.5 py-1 text-sm text-warning tabular-nums"
+              dir="ltr"
+              :title="`${formatNumber(totals.waste_kg)} كجم`"
+            >
+              إجمالي الهدر {{ formatCompactNumber(totals.waste_kg) }} كجم
             </p>
           </div>
         </div>
@@ -276,7 +328,10 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
 
       <UCard :ui="{ body: 'p-0' }">
         <div class="homos-scroll overflow-x-auto">
-          <table dir="rtl" class="w-max min-w-full text-sm text-center">
+          <table
+            dir="rtl"
+            class="w-max min-w-full text-sm text-center"
+          >
             <thead class="bg-elevated/60 text-muted">
               <tr>
                 <th :class="thClass + ' text-start'">
@@ -346,25 +401,35 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
                 <td class="p-2 whitespace-nowrap">
                   {{ row.status_name || '—' }}
                 </td>
-                <td :class="cellClass" dir="ltr">
-                  {{ formatNumber(row.kg_total) }}
+                <td
+                  :class="cellClass"
+                  dir="ltr"
+                  :title="formatNumber(row.kg_total)"
+                >
+                  {{ formatCompactNumber(row.kg_total) }}
                 </td>
-                <td :class="cellClass" dir="ltr">
-                  {{ formatNumber(row.ardab_total) }}
+                <td
+                  :class="cellClass"
+                  dir="ltr"
+                  :title="formatNumber(row.ardab_total)"
+                >
+                  {{ formatCompactNumber(row.ardab_total) }}
                 </td>
                 <td
                   v-if="showWasteColumns"
                   :class="[cellClass, row.waste_applied ? 'text-warning' : '']"
                   dir="ltr"
+                  :title="row.kind === 'store' ? undefined : formatNumber(row.waste_kg)"
                 >
-                  {{ row.kind === 'store' ? '—' : formatNumber(row.waste_kg) }}
+                  {{ row.kind === 'store' ? '—' : formatCompactNumber(row.waste_kg) }}
                 </td>
                 <td
                   v-if="showWasteColumns"
                   :class="cellClass"
                   dir="ltr"
+                  :title="formatNumber(row.net_kg)"
                 >
-                  {{ formatNumber(row.net_kg) }}
+                  {{ formatCompactNumber(row.net_kg) }}
                 </td>
               </tr>
               <tr
@@ -382,28 +447,41 @@ const tableColspan = computed(() => (showWasteColumns.value ? 9 : 7))
                 v-else
                 class="border-t-2 border-default bg-elevated/40 font-semibold"
               >
-                <td class="p-2 text-start whitespace-nowrap" colspan="5">
+                <td
+                  class="p-2 text-start whitespace-nowrap"
+                  colspan="5"
+                >
                   الإجمالي
                 </td>
-                <td :class="cellClass" dir="ltr">
-                  {{ formatNumber(totals.kg_total) }}
+                <td
+                  :class="cellClass"
+                  dir="ltr"
+                  :title="formatNumber(totals.kg_total)"
+                >
+                  {{ formatCompactNumber(totals.kg_total) }}
                 </td>
-                <td :class="cellClass" dir="ltr">
-                  {{ formatNumber(totals.ardab_total) }}
+                <td
+                  :class="cellClass"
+                  dir="ltr"
+                  :title="formatNumber(totals.ardab_total)"
+                >
+                  {{ formatCompactNumber(totals.ardab_total) }}
                 </td>
                 <td
                   v-if="showWasteColumns"
                   :class="cellClass + ' text-warning'"
                   dir="ltr"
+                  :title="formatNumber(totals.waste_kg)"
                 >
-                  {{ formatNumber(totals.waste_kg) }}
+                  {{ formatCompactNumber(totals.waste_kg) }}
                 </td>
                 <td
                   v-if="showWasteColumns"
                   :class="cellClass"
                   dir="ltr"
+                  :title="formatNumber(totals.net_kg)"
                 >
-                  {{ formatNumber(totals.net_kg) }}
+                  {{ formatCompactNumber(totals.net_kg) }}
                 </td>
               </tr>
             </tbody>
