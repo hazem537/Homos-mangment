@@ -27,10 +27,13 @@ export type SupplierPurchase =
   Database["public"]["Views"]["purchase_ledger"]["Row"];
 export type SupplierTransfer =
   Database["public"]["Tables"]["cash_transfers"]["Row"];
+export type DeliveryDestinationKind = "warehouse" | "store";
+
 export type SupplierDelivery =
   Database["public"]["Tables"]["warehouse_deliveries"]["Row"] & {
     warehouses?: { id: string; name: string } | null;
     warehouse_sections?: { id: string; name: string; warehouse_id: string } | null;
+    stores?: { id: string; name: string } | null;
     products?: { id: string; name: string } | null;
     stock_statuses?: { id: string; name: string } | null;
   };
@@ -43,6 +46,7 @@ type WarehouseSectionLite = {
 
 type SeasonLite = { id: string; name: string; ardab_factor: number };
 type WarehouseLite = { id: string; name: string; account_type_id: string };
+type StoreLite = { id: string; name: string };
 type ProductLite = { id: string; name: string };
 type StatusLite = { id: string; name: string; product_id: string };
 type SupplierLite = {
@@ -71,6 +75,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const dueByProduct = ref<SupplierDue[]>([]);
   const activeSeason = ref<SeasonLite | null>(null);
   const warehouses = ref<WarehouseLite[]>([]);
+  const stores = ref<StoreLite[]>([]);
   const sections = ref<WarehouseSectionLite[]>([]);
   const products = ref<ProductLite[]>([]);
   const stockStatuses = ref<StatusLite[]>([]);
@@ -110,8 +115,10 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   });
 
   const deliveryForm = reactive({
+    destination_kind: "warehouse" as DeliveryDestinationKind,
     warehouse_id: "" as string,
     section_id: "" as string,
+    store_id: "" as string,
     product_id: "" as string,
     delivery_date: todayIsoDate(),
     quantity_kg: "" as string,
@@ -122,6 +129,14 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     vehicle_number: "",
     notes: "",
   });
+
+  const deliveryDestinationOptions: {
+    label: string
+    value: DeliveryDestinationKind
+  }[] = [
+    { label: "شونة", value: "warehouse" },
+    { label: "مخزن", value: "store" },
+  ];
 
   const paymentForm = reactive({
     amount: "" as string,
@@ -170,6 +185,10 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     return rows.map((w) => ({ label: w.name, value: w.id }));
   });
 
+  const storeOptions = computed(() =>
+    stores.value.map((s) => ({ label: s.name, value: s.id })),
+  );
+
   const syncWarehouseForSupplierType = () => {
     const options = warehouseOptions.value;
     if (!options.length) {
@@ -181,6 +200,45 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       deliveryForm.warehouse_id = options[0]?.value || "";
     }
     syncSectionForWarehouse();
+  };
+
+  const syncStoreSelection = () => {
+    const options = storeOptions.value;
+    if (!options.length) {
+      deliveryForm.store_id = "";
+      return;
+    }
+    if (!options.some((o) => o.value === deliveryForm.store_id)) {
+      deliveryForm.store_id = options[0]?.value || "";
+    }
+  };
+
+  const onDeliveryDestinationChange = async () => {
+    if (deliveryForm.destination_kind === "warehouse") {
+      deliveryForm.store_id = "";
+      if (!(await ensureWarehousesLoaded())) return;
+      if (!warehouseOptions.value.length) {
+        toast.add({
+          title: "لا توجد شون بنفس نوع المورد",
+          color: "warning",
+        });
+        return;
+      }
+      syncWarehouseForSupplierType();
+      return;
+    }
+    deliveryForm.warehouse_id = "";
+    deliveryForm.section_id = "";
+    if (!(await ensureStoresLoaded())) return;
+    if (!storeOptions.value.length) {
+      toast.add({
+        title: "لا توجد مخازن",
+        description: "أضف مخزناً أولاً",
+        color: "warning",
+      });
+      return;
+    }
+    syncStoreSelection();
   };
 
   const productOptions = computed(() =>
@@ -708,6 +766,25 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     return true;
   };
 
+  const ensureStoresLoaded = async () => {
+    if (stores.value.length) return true;
+    const { data, error } = await client
+      .from("stores")
+      .select("id, name")
+      .eq("is_active", true)
+      .order("name");
+    if (error) {
+      toast.add({
+        title: "تعذر تحميل المخازن",
+        description: error.message,
+        color: "error",
+      });
+      return false;
+    }
+    stores.value = data ?? [];
+    return true;
+  };
+
   const cancelPurchaseInline = () => {
     purchaseInlineOpen.value = false;
     editingPurchase.value = null;
@@ -810,17 +887,25 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       });
       return;
     }
+    editingDelivery.value = null;
+    deliveryForm.destination_kind = "warehouse";
+    deliveryForm.store_id = "";
     if (!(await ensureWarehousesLoaded())) return;
     if (!warehouseOptions.value.length) {
-      toast.add({
-        title: "لا توجد شون بنفس نوع المورد",
-        description: "أضف شونة بنفس نوع الحساب أولاً",
-        color: "warning",
-      });
-      return;
+      // Fall back to store if no matching warehouse
+      if (!(await ensureStoresLoaded()) || !storeOptions.value.length) {
+        toast.add({
+          title: "لا توجد شونة أو مخزن متاح",
+          description: "أضف شونة بنفس نوع الحساب أو مخزناً أولاً",
+          color: "warning",
+        });
+        return;
+      }
+      deliveryForm.destination_kind = "store";
+      syncStoreSelection();
+    } else {
+      syncWarehouseForSupplierType();
     }
-    editingDelivery.value = null;
-    syncWarehouseForSupplierType();
     deliveryForm.product_id = selectedProductId.value;
     deliveryForm.delivery_date = todayIsoDate();
     deliveryForm.quantity_kg = "";
@@ -835,11 +920,22 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   };
 
   const openDeliveryEdit = async (row: SupplierDelivery) => {
-    if (!(await ensureWarehousesLoaded())) return;
+    const kind: DeliveryDestinationKind
+      = row.destination_kind === "store" || row.store_id
+        ? "store"
+        : "warehouse";
+    if (kind === "warehouse") {
+      if (!(await ensureWarehousesLoaded())) return;
+    } else if (!(await ensureStoresLoaded())) {
+      return;
+    }
     editingDelivery.value = row;
-    deliveryForm.warehouse_id = row.warehouse_id;
-    deliveryForm.section_id = row.section_id;
-    syncSectionForWarehouse();
+    deliveryForm.destination_kind = kind;
+    deliveryForm.warehouse_id = row.warehouse_id || "";
+    deliveryForm.section_id = row.section_id || "";
+    deliveryForm.store_id = row.store_id || "";
+    if (kind === "warehouse") syncSectionForWarehouse();
+    else syncStoreSelection();
     deliveryForm.product_id = row.product_id;
     deliveryForm.delivery_date = row.delivery_date;
     deliveryForm.quantity_kg = String(row.quantity_kg);
@@ -1076,44 +1172,55 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       || deliveryForm.product_id;
     deliveryForm.product_id = productId;
     const quantityKg = parseDecimal(deliveryForm.quantity_kg);
-    if (!deliveryForm.warehouse_id) {
-      toast.add({ title: "اختر الشونة", color: "warning" });
-      return;
-    }
-    const warehouse = warehouses.value.find(
-      (w) => w.id === deliveryForm.warehouse_id,
-    );
-    if (
-      warehouse
-      && supplier.value.account_type_id
-      && warehouse.account_type_id !== supplier.value.account_type_id
-    ) {
-      toast.add({
-        title: "نوع المورد يجب أن يطابق نوع الشونة",
-        color: "warning",
-      });
-      return;
-    }
+    const toStore = deliveryForm.destination_kind === "store";
+
     if (!productId) {
       toast.add({ title: "اختر الصنف", color: "warning" });
       return;
     }
-    if (!deliveryForm.section_id) {
-      toast.add({ title: "اختر الربع", color: "warning" });
-      return;
+
+    if (toStore) {
+      if (!deliveryForm.store_id) {
+        toast.add({ title: "اختر المخزن", color: "warning" });
+        return;
+      }
+    } else {
+      if (!deliveryForm.warehouse_id) {
+        toast.add({ title: "اختر الشونة", color: "warning" });
+        return;
+      }
+      const warehouse = warehouses.value.find(
+        (w) => w.id === deliveryForm.warehouse_id,
+      );
+      if (
+        warehouse
+        && supplier.value.account_type_id
+        && warehouse.account_type_id !== supplier.value.account_type_id
+      ) {
+        toast.add({
+          title: "نوع المورد يجب أن يطابق نوع الشونة",
+          color: "warning",
+        });
+        return;
+      }
+      if (!deliveryForm.section_id) {
+        toast.add({ title: "اختر الربع", color: "warning" });
+        return;
+      }
+      const sectionOk = sections.value.some(
+        (s) =>
+          s.id === deliveryForm.section_id
+          && s.warehouse_id === deliveryForm.warehouse_id,
+      );
+      if (!sectionOk) {
+        toast.add({
+          title: "الربع لا يتبع الشونة المحددة",
+          color: "warning",
+        });
+        return;
+      }
     }
-    const sectionOk = sections.value.some(
-      (s) =>
-        s.id === deliveryForm.section_id
-        && s.warehouse_id === deliveryForm.warehouse_id,
-    );
-    if (!sectionOk) {
-      toast.add({
-        title: "الربع لا يتبع الشونة المحددة",
-        color: "warning",
-      });
-      return;
-    }
+
     if (!deliveryForm.delivery_date) {
       toast.add({ title: "التاريخ مطلوب", color: "warning" });
       return;
@@ -1176,8 +1283,10 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: supplier.value.id,
-      warehouse_id: deliveryForm.warehouse_id,
-      section_id: deliveryForm.section_id,
+      destination_kind: toStore ? "store" as const : "warehouse" as const,
+      warehouse_id: toStore ? null : deliveryForm.warehouse_id,
+      section_id: toStore ? null : deliveryForm.section_id,
+      store_id: toStore ? deliveryForm.store_id : null,
       product_id: deliveryForm.product_id,
       status_id: statusId,
       delivery_date: deliveryForm.delivery_date,
@@ -1482,7 +1591,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
           client
             .from("warehouse_deliveries")
             .select(
-              "*, warehouses(id, name), warehouse_sections(id, name, warehouse_id), products(id, name), stock_statuses(id, name)",
+              "*, warehouses(id, name), warehouse_sections(id, name, warehouse_id), stores(id, name), products(id, name), stock_statuses(id, name)",
             )
             .eq("supplier_id", id)
             .eq("season_id", seasonId)
@@ -1601,11 +1710,14 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     computedPurchaseTotal,
     computedDeliveryArdab,
     warehouseOptions,
+    storeOptions,
+    deliveryDestinationOptions,
     productOptions,
     deliveryProductOptions,
     productNameOf,
     sectionOptions,
     onDeliveryWarehouseChange,
+    onDeliveryDestinationChange,
     transferKindOptions,
     transferKindLabel: (kind: TransferKind | string) => transferKindLabel(kind),
     deliveryCostKindLabel,

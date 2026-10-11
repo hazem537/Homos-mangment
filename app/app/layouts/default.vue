@@ -23,14 +23,9 @@ const links = [
     to: '/suppliers'
   },
   {
-    label: 'إحصائيات',
+    label: 'إحصائيات الموردين',
     icon: 'i-lucide-chart-column',
     to: '/supplier-stats'
-  },
-  {
-    label: 'أصناف الحمص',
-    icon: 'i-lucide-wheat',
-    to: '/products'
   },
   {
     label: 'الشون',
@@ -48,9 +43,14 @@ const links = [
     to: '/meklas'
   },
   {
-    label: 'العملاء',
-    icon: 'i-lucide-user-round',
-    to: '/clients'
+    label: 'إحصائيات المخازن',
+    icon: 'i-lucide-chart-pie',
+    to: '/location-stats'
+  },
+  {
+    label: 'أصناف الحمص',
+    icon: 'i-lucide-wheat',
+    to: '/products'
   },
   {
     label: 'المواسم',

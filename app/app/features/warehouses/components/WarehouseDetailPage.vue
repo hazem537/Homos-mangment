@@ -315,7 +315,7 @@ const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
         </div>
         <div
           v-if="transferForm.to_kind === 'warehouse'"
-          class="w-40 shrink-0"
+          class="w-52 shrink-0"
         >
           <p class="mb-1 text-xs text-muted">
             الشونة
@@ -332,7 +332,7 @@ const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
         </div>
         <div class="w-40 shrink-0">
           <p class="mb-1 text-xs text-muted">
-            الوجهة
+            {{ transferForm.to_kind === 'warehouse' ? 'الربع' : 'الوجهة' }}
           </p>
           <USelect
             v-model="transferForm.to_id"
@@ -340,7 +340,7 @@ const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
             value-key="value"
             label-key="label"
             class="w-full"
-            placeholder="الوجهة"
+            :placeholder="transferForm.to_kind === 'warehouse' ? 'الربع' : 'الوجهة'"
           />
         </div>
         <div class="w-28 shrink-0">

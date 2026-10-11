@@ -14,6 +14,13 @@ const {
   save,
   softDelete
 } = useMeklas()
+
+const meklaDetailTo = (row: { mekla_id: string, product_id?: string | null }) => {
+  if (row.product_id) {
+    return { path: `/meklas/${row.mekla_id}`, query: { product: row.product_id } }
+  }
+  return `/meklas/${row.mekla_id}`
+}
 </script>
 
 <template>
@@ -72,7 +79,12 @@ const {
               class="border-t border-default"
             >
               <td class="p-3 font-medium">
-                {{ row.mekla_name }}
+                <NuxtLink
+                  :to="meklaDetailTo(row)"
+                  class="text-highlighted hover:underline"
+                >
+                  {{ row.mekla_name }}
+                </NuxtLink>
                 <p v-if="row.notes" class="text-xs text-muted font-normal mt-0.5">
                   {{ row.notes }}
                 </p>
@@ -88,6 +100,12 @@ const {
               </td>
               <td class="p-3">
                 <div class="flex justify-center gap-1">
+                  <UButton
+                    size="sm"
+                    variant="ghost"
+                    icon="i-lucide-eye"
+                    :to="meklaDetailTo(row)"
+                  />
                   <UButton
                     size="sm"
                     variant="ghost"

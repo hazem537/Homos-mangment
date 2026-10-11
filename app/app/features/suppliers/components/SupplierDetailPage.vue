@@ -46,9 +46,12 @@ const {
   computedPurchaseArdab,
   computedPurchaseTotal,
   warehouseOptions,
+  storeOptions,
+  deliveryDestinationOptions,
   productOptions,
   sectionOptions,
   onDeliveryWarehouseChange,
+  onDeliveryDestinationChange,
   transferKindOptions,
   transferKindLabel,
   deliveryCostKindLabel,
@@ -898,7 +901,10 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                       التاريخ
                     </th>
                     <th :class="ledgerThClass">
-                      الشونة
+                      الوجهة
+                    </th>
+                    <th :class="ledgerThClass">
+                      الموقع
                     </th>
                     <th :class="ledgerThClass">
                       الربع
@@ -951,6 +957,18 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                     </td>
                     <td class="p-1">
                       <USelect
+                        v-model="deliveryForm.destination_kind"
+                        :items="deliveryDestinationOptions"
+                        value-key="value"
+                        label-key="label"
+                        size="sm"
+                        class="w-28"
+                        @update:model-value="onDeliveryDestinationChange"
+                      />
+                    </td>
+                    <td class="p-1">
+                      <USelect
+                        v-if="deliveryForm.destination_kind === 'warehouse'"
                         v-model="deliveryForm.warehouse_id"
                         :items="warehouseOptions"
                         value-key="value"
@@ -959,9 +977,20 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                         class="w-32"
                         @update:model-value="onDeliveryWarehouseChange"
                       />
+                      <USelect
+                        v-else
+                        v-model="deliveryForm.store_id"
+                        :items="storeOptions"
+                        value-key="value"
+                        label-key="label"
+                        size="sm"
+                        class="w-32"
+                        placeholder="المخزن"
+                      />
                     </td>
                     <td class="p-1">
                       <USelect
+                        v-if="deliveryForm.destination_kind === 'warehouse'"
                         v-model="deliveryForm.section_id"
                         :items="sectionOptions"
                         value-key="value"
@@ -970,6 +999,10 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                         class="w-28"
                         placeholder="الربع"
                       />
+                      <span
+                        v-else
+                        class="text-muted text-xs"
+                      >—</span>
                     </td>
                     <td class="p-1.5 tabular-nums text-end" dir="ltr">
                       {{ formatNumber(deliveryCreateKgRunning.before) }}
@@ -1077,6 +1110,18 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                       </td>
                       <td class="p-1">
                         <USelect
+                          v-model="deliveryForm.destination_kind"
+                          :items="deliveryDestinationOptions"
+                          value-key="value"
+                          label-key="label"
+                          size="sm"
+                          class="w-28"
+                          @update:model-value="onDeliveryDestinationChange"
+                        />
+                      </td>
+                      <td class="p-1">
+                        <USelect
+                          v-if="deliveryForm.destination_kind === 'warehouse'"
                           v-model="deliveryForm.warehouse_id"
                           :items="warehouseOptions"
                           value-key="value"
@@ -1085,9 +1130,20 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                           class="w-32"
                           @update:model-value="onDeliveryWarehouseChange"
                         />
+                        <USelect
+                          v-else
+                          v-model="deliveryForm.store_id"
+                          :items="storeOptions"
+                          value-key="value"
+                          label-key="label"
+                          size="sm"
+                          class="w-32"
+                          placeholder="المخزن"
+                        />
                       </td>
                       <td class="p-1">
                         <USelect
+                          v-if="deliveryForm.destination_kind === 'warehouse'"
                           v-model="deliveryForm.section_id"
                           :items="sectionOptions"
                           value-key="value"
@@ -1096,6 +1152,10 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                           class="w-28"
                           placeholder="الربع"
                         />
+                        <span
+                          v-else
+                          class="text-muted text-xs"
+                        >—</span>
                       </td>
                       <td class="p-1.5 tabular-nums text-end" dir="ltr">
                         {{ formatNumber(deliveryKgRunningOf(row.id).before) }}
@@ -1187,10 +1247,27 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                           {{ row.delivery_date }}
                         </td>
                         <td class="p-2 align-middle">
-                          {{ row.warehouses?.name || '—' }}
+                          <UBadge
+                            size="sm"
+                            variant="subtle"
+                            :color="row.destination_kind === 'store' || row.store_id ? 'primary' : 'warning'"
+                          >
+                            {{ row.destination_kind === 'store' || row.store_id ? 'مخزن' : 'شونة' }}
+                          </UBadge>
                         </td>
                         <td class="p-2 align-middle">
-                          {{ row.warehouse_sections?.name || '—' }}
+                          {{
+                            row.destination_kind === 'store' || row.store_id
+                              ? (row.stores?.name || '—')
+                              : (row.warehouses?.name || '—')
+                          }}
+                        </td>
+                        <td class="p-2 align-middle">
+                          {{
+                            row.destination_kind === 'store' || row.store_id
+                              ? '—'
+                              : (row.warehouse_sections?.name || '—')
+                          }}
                         </td>
                         <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
                           {{ formatNumber(deliveryKgRunningOf(row.id).before) }}
@@ -1261,14 +1338,14 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                   </template>
 
                   <tr v-if="!filteredDeliveries.length && !isDeliveryCreating">
-                    <td colspan="13" class="border-t border-default p-6 text-center text-muted">
+                    <td colspan="14" class="border-t border-default p-6 text-center text-muted">
                       لا توجد تسليمات لهذا الصنف
                     </td>
                   </tr>
 
                   <tr class="h-full" aria-hidden="true">
                     <td
-                      v-for="i in 13"
+                      v-for="i in 14"
                       :key="`delivery-fill-${i}`"
                       :class="ledgerFillTdClass"
                     />
@@ -1281,6 +1358,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
                         <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
                       </UTooltip>
                     </td>
+                    <td :class="ledgerTotalTdClass" />
                     <td :class="ledgerTotalTdClass" />
                     <td :class="ledgerTotalTdClass" />
                     <td :class="ledgerTotalTdClass" />

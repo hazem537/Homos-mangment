@@ -1,4 +1,5 @@
 import type { Database, StockLocationKind } from '~/types/database.types'
+import { withAccountType } from '~/utils/accountType'
 import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 
 export type SectionBalance =
@@ -82,6 +83,7 @@ function locationKindLabel(kind: StockLocationKind) {
   if (kind === 'mekla') return 'مقلى'
   if (kind === 'client') return 'عميل'
   if (kind === 'waste') return 'هدر'
+  if (kind === 'sale') return 'بيع'
   return 'ربع'
 }
 
@@ -184,7 +186,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   const editingMovementQty = ref(0)
   const stores = ref<{ id: string, name: string }[]>([])
   const meklas = ref<{ id: string, name: string }[]>([])
-  const otherWarehouses = ref<{ id: string, name: string }[]>([])
+  const otherWarehouses = ref<{ id: string, name: string, account_type_name: string | null }[]>([])
   const destSections = ref<{ id: string, name: string }[]>([])
   const stockStatuses = ref<{ id: string, name: string, product_id: string }[]>([])
   type TransferUiKind = 'store' | 'mekla' | 'warehouse'
@@ -221,7 +223,10 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   })
 
   const destWarehouseOptions = computed(() =>
-    otherWarehouses.value.map(w => ({ label: w.name, value: w.id }))
+    otherWarehouses.value.map(w => ({
+      label: withAccountType(w.name, w.account_type_name),
+      value: w.id
+    }))
   )
 
   const resolveLocationName = async (
@@ -230,6 +235,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     sectionNameById: Map<string, string>
   ) => {
     if (kind === 'waste') return 'هدر'
+    if (kind === 'sale') return 'بيع'
     if (kind === 'section') {
       const local = sectionNameById.get(id)
       if (local) return local
@@ -695,7 +701,11 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     const [storesRes, meklasRes, warehousesRes, statusesRes] = await Promise.all([
       client.from('stores').select('id, name').eq('is_active', true).order('name'),
       client.from('meklas').select('id, name').eq('is_active', true).order('name'),
-      client.from('warehouses').select('id, name').eq('is_active', true).order('name'),
+      client
+        .from('warehouses')
+        .select('id, name, account_types(name)')
+        .eq('is_active', true)
+        .order('name'),
       productId
         ? client
           .from('stock_statuses')
@@ -711,7 +721,16 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     if (statusesRes.error) throw statusesRes.error
     stores.value = storesRes.data ?? []
     meklas.value = meklasRes.data ?? []
-    otherWarehouses.value = (warehousesRes.data ?? []).filter(w => w.id !== currentId)
+    otherWarehouses.value = (warehousesRes.data ?? [])
+      .filter(w => w.id !== currentId)
+      .map((w) => {
+        const raw = w as { id: string, name: string, account_types?: { name: string } | null }
+        return {
+          id: raw.id,
+          name: raw.name,
+          account_type_name: raw.account_types?.name ?? null
+        }
+      })
     stockStatuses.value = statusesRes.data ?? []
   }
 

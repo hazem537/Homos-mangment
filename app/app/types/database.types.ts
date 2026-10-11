@@ -9,7 +9,7 @@ export type Json =
 export type AppRole = 'admin' | 'accountant' | 'warehouse'
 export type TransferKind = 'transfer' | 'settlement' | 'other' | 'commission'
 export type DeliveryCostKind = 'nolon' | 'nathriyat'
-export type StockLocationKind = 'section' | 'store' | 'mekla' | 'client' | 'waste'
+export type StockLocationKind = 'section' | 'store' | 'mekla' | 'client' | 'waste' | 'sale'
 
 export type Database = {
   public: {
@@ -617,8 +617,10 @@ export type Database = {
         Row: {
           id: string
           season_id: string
-          warehouse_id: string
-          section_id: string
+          destination_kind: 'warehouse' | 'store'
+          warehouse_id: string | null
+          section_id: string | null
+          store_id: string | null
           supplier_id: string
           product_id: string
           status_id: string
@@ -636,8 +638,10 @@ export type Database = {
         Insert: {
           id?: string
           season_id: string
-          warehouse_id: string
-          section_id: string
+          destination_kind?: 'warehouse' | 'store'
+          warehouse_id?: string | null
+          section_id?: string | null
+          store_id?: string | null
           supplier_id: string
           product_id: string
           status_id: string
@@ -655,8 +659,10 @@ export type Database = {
         Update: {
           id?: string
           season_id?: string
-          warehouse_id?: string
-          section_id?: string
+          destination_kind?: 'warehouse' | 'store'
+          warehouse_id?: string | null
+          section_id?: string | null
+          store_id?: string | null
           supplier_id?: string
           product_id?: string
           status_id?: string
@@ -691,6 +697,13 @@ export type Database = {
             columns: ['section_id']
             isOneToOne: false
             referencedRelation: 'warehouse_sections'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'warehouse_deliveries_store_id_fkey'
+            columns: ['store_id']
+            isOneToOne: false
+            referencedRelation: 'stores'
             referencedColumns: ['id']
           },
           {
