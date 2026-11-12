@@ -10,6 +10,7 @@ const {
   statuses,
   statusModalOpen,
   statusForm,
+  editingStatus,
   productEditOpen,
   productForm,
   openProductEdit,
@@ -17,6 +18,7 @@ const {
   openStatusCreate,
   openStatusEdit,
   saveStatus,
+  setAsDefault,
   deleteStatus
 } = useProductDetail(() => props.productId)
 </script>
@@ -69,7 +71,7 @@ const {
       </div>
 
       <div v-if="loading">
-        <TableSkeleton :cols="3" />
+        <TableSkeleton :cols="4" />
       </div>
       <div v-else class="overflow-x-auto">
         <table dir="rtl" class="w-full text-sm text-center">
@@ -79,9 +81,12 @@ const {
                 الاسم
               </th>
               <th class="p-3 font-medium">
+                افتراضي
+              </th>
+              <th class="p-3 font-medium">
                 ملاحظات
               </th>
-              <th class="p-3 font-medium w-28">
+              <th class="p-3 font-medium w-36">
                 إجراءات
               </th>
             </tr>
@@ -95,11 +100,35 @@ const {
               <td class="p-3 font-medium">
                 {{ row.name }}
               </td>
+              <td class="p-3">
+                <UBadge
+                  v-if="row.is_default"
+                  size="sm"
+                  color="primary"
+                  variant="subtle"
+                >
+                  افتراضي
+                </UBadge>
+                <span
+                  v-else
+                  class="text-muted"
+                >—</span>
+              </td>
               <td class="max-w-[16rem] p-3 text-start text-muted whitespace-normal break-words">
                 {{ row.notes || '—' }}
               </td>
               <td class="p-3">
                 <div class="flex justify-center gap-1">
+                  <UButton
+                    v-if="!row.is_default"
+                    size="sm"
+                    variant="ghost"
+                    color="primary"
+                    icon="i-lucide-star"
+                    :disabled="saving"
+                    title="تعيين كافتراضي"
+                    @click="setAsDefault(row)"
+                  />
                   <UButton
                     size="sm"
                     variant="ghost"
@@ -111,14 +140,14 @@ const {
                     variant="ghost"
                     color="error"
                     icon="i-lucide-trash-2"
-                    :disabled="saving"
+                    :disabled="saving || row.is_default"
                     @click="deleteStatus(row)"
                   />
                 </div>
               </td>
             </tr>
             <tr v-if="!statuses.length">
-              <td colspan="3" class="p-6 text-center text-muted">
+              <td colspan="4" class="p-6 text-center text-muted">
                 لا توجد حالات لهذا الصنف
               </td>
             </tr>
@@ -159,6 +188,17 @@ const {
           <UFormField label="ملاحظات">
             <UTextarea v-model="statusForm.notes" class="w-full" :rows="3" />
           </UFormField>
+          <UCheckbox
+            v-model="statusForm.is_default"
+            label="حالة افتراضية للتسليم"
+            :disabled="!!editingStatus?.is_default"
+          />
+          <p
+            v-if="editingStatus?.is_default"
+            class="text-xs text-muted"
+          >
+            لتعيين حالة أخرى كافتراضية استخدم نجمة «تعيين كافتراضي» في الجدول
+          </p>
         </div>
       </template>
       <template #footer>

@@ -14,7 +14,7 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
   const statuses = ref<StockStatusRow[]>([])
   const statusModalOpen = ref(false)
   const editingStatus = ref<StockStatusRow | null>(null)
-  const statusForm = reactive({ name: '', notes: '' })
+  const statusForm = reactive({ name: '', notes: '', is_default: false })
   const productEditOpen = ref(false)
   const productForm = reactive({ name: '', notes: '' })
 
@@ -33,6 +33,7 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
           .select('*')
           .eq('product_id', id)
           .eq('is_active', true)
+          .order('is_default', { ascending: false })
           .order('name')
       ])
       if (productRes.error) throw productRes.error
@@ -83,6 +84,7 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
     editingStatus.value = null
     statusForm.name = ''
     statusForm.notes = ''
+    statusForm.is_default = !statuses.value.some(s => s.is_default)
     statusModalOpen.value = true
   }
 
@@ -90,7 +92,22 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
     editingStatus.value = row
     statusForm.name = row.name
     statusForm.notes = row.notes || ''
+    statusForm.is_default = !!row.is_default
     statusModalOpen.value = true
+  }
+
+  const setDefaultExclusive = async (productId: string, statusId: string) => {
+    const { error: clearError } = await client
+      .from('stock_statuses')
+      .update({ is_default: false })
+      .eq('product_id', productId)
+      .eq('is_default', true)
+    if (clearError) throw clearError
+    const { error: setError } = await client
+      .from('stock_statuses')
+      .update({ is_default: true })
+      .eq('id', statusId)
+    if (setError) throw setError
   }
 
   const saveStatus = async () => {
@@ -101,22 +118,45 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
     }
     saving.value = true
     try {
-      const payload = {
-        product_id: id,
-        name: statusForm.name.trim(),
-        notes: statusForm.notes.trim() || null,
-        is_active: true
-      }
+      const makeDefault = !!statusForm.is_default
       if (editingStatus.value) {
         const { error } = await client
           .from('stock_statuses')
-          .update(payload)
+          .update({
+            product_id: id,
+            name: statusForm.name.trim(),
+            notes: statusForm.notes.trim() || null,
+            is_active: true
+          })
           .eq('id', editingStatus.value.id)
         if (error) throw error
+        if (makeDefault && !editingStatus.value.is_default) {
+          await setDefaultExclusive(id, editingStatus.value.id)
+        } else if (!makeDefault && editingStatus.value.is_default) {
+          toast.add({
+            title: 'اختر حالة افتراضية أخرى أولاً',
+            color: 'warning'
+          })
+          saving.value = false
+          return
+        }
         toast.add({ title: 'تم تحديث الحالة', color: 'success' })
       } else {
-        const { error } = await client.from('stock_statuses').insert(payload)
+        const { data, error } = await client
+          .from('stock_statuses')
+          .insert({
+            product_id: id,
+            name: statusForm.name.trim(),
+            notes: statusForm.notes.trim() || null,
+            is_active: true,
+            is_default: false
+          })
+          .select('id')
+          .single()
         if (error) throw error
+        if (makeDefault && data?.id) {
+          await setDefaultExclusive(id, data.id)
+        }
         toast.add({ title: 'تمت إضافة الحالة', color: 'success' })
       }
       statusModalOpen.value = false
@@ -128,7 +168,30 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
     }
   }
 
+  const setAsDefault = async (row: StockStatusRow) => {
+    const id = toValue(productId)
+    if (!id || row.is_default) return
+    saving.value = true
+    try {
+      await setDefaultExclusive(id, row.id)
+      toast.add({ title: `الحالة الافتراضية: ${row.name}`, color: 'success' })
+      await load()
+    } catch (e: any) {
+      toast.add({ title: 'فشل التعيين', description: e.message, color: 'error' })
+    } finally {
+      saving.value = false
+    }
+  }
+
   const deleteStatus = async (row: StockStatusRow) => {
+    if (row.is_default) {
+      toast.add({
+        title: 'لا يمكن حذف الحالة الافتراضية',
+        description: 'عيّن حالة أخرى كافتراضية أولاً',
+        color: 'warning'
+      })
+      return
+    }
     const ok = await askConfirm(`حذف الحالة «${row.name}» نهائياً؟`)
     if (!ok) return
     saving.value = true
@@ -161,6 +224,7 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
     statuses,
     statusModalOpen,
     statusForm,
+    editingStatus,
     productEditOpen,
     productForm,
     openProductEdit,
@@ -168,6 +232,7 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
     openStatusCreate,
     openStatusEdit,
     saveStatus,
+    setAsDefault,
     deleteStatus
   }
 }

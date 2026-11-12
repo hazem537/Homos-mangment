@@ -1,50 +1,25 @@
+import { useQueryClient } from '@tanstack/vue-query'
 import type { Database, StockLocationKind } from '~/types/database.types'
+import { queryKeys } from '~/composables/queries/queryKeys'
+import { useWarehouseDetailQuery } from '~/composables/queries/useWarehouseDetailQuery'
 import { withAccountType } from '~/utils/accountType'
 import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
+import {
+  buildSectionCards,
+  sectionProductKey,
+  type SectionBalance,
+  type SectionCard,
+  type SectionIncomingRow,
+  type SectionOutgoingRow,
+  type WarehouseDetailBundle,
+  type WarehouseRow
+} from '../utils/warehouseDetailBundle'
 
-export type SectionBalance =
-  Database['public']['Functions']['section_balances']['Returns'][number]
-
-export type SectionIncomingRow = {
-  id: string
-  date: string
-  created_at: string
-  source: string
-  quantity_kg: number
-  qty_before: number
-  qty_after: number
-  notes: string | null
-  kind: 'delivery' | 'movement'
-  /** Present when kind === 'movement' */
-  product_id?: string
-  status_id?: string | null
-  from_kind?: StockLocationKind
-  from_id?: string
-  to_kind?: StockLocationKind
-  to_id?: string
-}
-
-export type SectionOutgoingRow = {
-  id: string
-  date: string
-  created_at: string
-  destination: string
-  status_name: string | null
-  quantity_kg: number
-  qty_before: number
-  qty_after: number
-  notes: string | null
-  product_id: string
-  status_id: string | null
-  from_kind: StockLocationKind
-  from_id: string
-  to_kind: StockLocationKind
-  to_id: string
-}
-
-export type SectionCard = SectionBalance & {
-  incoming: SectionIncomingRow[]
-  outgoing: SectionOutgoingRow[]
+export type {
+  SectionBalance,
+  SectionCard,
+  SectionIncomingRow,
+  SectionOutgoingRow
 }
 
 export type WarehouseLedgerIncomingRow = SectionIncomingRow & {
@@ -67,10 +42,6 @@ export type WarehouseLedgerCard = {
   kg_remaining: number
 }
 
-type WarehouseRow = Database['public']['Tables']['warehouses']['Row']
-type MovementRow = Database['public']['Tables']['stock_movements']['Row']
-export type WarehouseExpense = Database['public']['Tables']['warehouse_expenses']['Row']
-
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10)
 }
@@ -78,84 +49,15 @@ function todayIsoDate() {
 /** Kept for a future over-limit alert (not surfaced in UI yet). */
 export const WASTE_MAX_RATIO = 0.02
 
-function locationKindLabel(kind: StockLocationKind) {
-  if (kind === 'store') return 'مخزن'
-  if (kind === 'mekla') return 'مقلى'
-  if (kind === 'client') return 'عميل'
-  if (kind === 'waste') return 'هدر'
-  if (kind === 'sale') return 'بيع'
-  return 'ربع'
-}
-
-function sectionProductKey(
-  sectionId: string,
-  productId: string | null | undefined,
-  statusId: string | null | undefined
-) {
-  return `${sectionId}:${productId || ''}:${statusId || ''}`
-}
-
-function applySectionRunningBalances(
-  incoming: Omit<SectionIncomingRow, 'qty_before' | 'qty_after'>[],
-  outgoing: Omit<SectionOutgoingRow, 'qty_before' | 'qty_after'>[]
-) {
-  type Event = {
-    id: string
-    date: string
-    created_at: string
-    delta: number
-  }
-
-  const events: Event[] = [
-    ...incoming.map(r => ({
-      id: r.id,
-      date: r.date,
-      created_at: r.created_at,
-      delta: Number(r.quantity_kg)
-    })),
-    ...outgoing.map(r => ({
-      id: r.id,
-      date: r.date,
-      created_at: r.created_at,
-      delta: -Number(r.quantity_kg)
-    }))
-  ]
-
-  events.sort((a, b) => {
-    const byDate = a.date.localeCompare(b.date)
-    if (byDate !== 0) return byDate
-    return a.created_at.localeCompare(b.created_at)
-  })
-
-  const balanceById = new Map<string, { qty_before: number, qty_after: number }>()
-  let balance = 0
-  for (const event of events) {
-    const qty_before = Number(balance.toFixed(4))
-    const qty_after = Number((balance + event.delta).toFixed(4))
-    balanceById.set(event.id, { qty_before, qty_after })
-    balance = qty_after
-  }
-
-  const withBalance = <T extends { id: string }>(
-    rows: T[]
-  ): Array<T & { qty_before: number, qty_after: number }> =>
-    rows.map((row) => {
-      const bal = balanceById.get(row.id) ?? { qty_before: 0, qty_after: 0 }
-      return { ...row, ...bal }
-    })
-
-  return {
-    incoming: withBalance(incoming) as SectionIncomingRow[],
-    outgoing: withBalance(outgoing) as SectionOutgoingRow[]
-  }
-}
-
 export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   const client = useSupabaseClient<Database>()
   const toast = useToast()
+  const queryClient = useQueryClient()
   const { confirm: askConfirm } = useConfirmDialog()
+  const detailQuery = useWarehouseDetailQuery(warehouseId)
 
-  const loading = ref(true)
+  const loading = computed(() => detailQuery.isInitialLoading.value)
+  const isRefreshing = computed(() => detailQuery.isRefreshing.value)
   const saving = ref(false)
   const warehouse = ref<WarehouseRow | null>(null)
   const sectionCards = ref<SectionCard[]>([])
@@ -167,15 +69,6 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   const editingSection = ref<SectionBalance | null>(null)
   const sectionForm = reactive({
     name: '',
-    notes: ''
-  })
-
-  const expenses = ref<WarehouseExpense[]>([])
-  const editingExpense = ref<WarehouseExpense | null>(null)
-  const isExpenseCreating = ref(false)
-  const expenseForm = reactive({
-    payment_date: todayIsoDate(),
-    amount: '' as string,
     notes: ''
   })
 
@@ -195,6 +88,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     to_warehouse_id: '' as string,
     to_id: '' as string,
     status_id: '' as string,
+    to_status_id: '' as string,
     quantity_kg: '' as string,
     movement_date: todayIsoDate(),
     notes: ''
@@ -229,272 +123,67 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }))
   )
 
-  const resolveLocationName = async (
-    kind: StockLocationKind,
-    id: string,
-    sectionNameById: Map<string, string>
-  ) => {
-    if (kind === 'waste') return 'هدر'
-    if (kind === 'sale') return 'بيع'
-    if (kind === 'section') {
-      const local = sectionNameById.get(id)
-      if (local) return local
-      const { data } = await client
-        .from('warehouse_sections')
-        .select('name, warehouses(name)')
-        .eq('id', id)
-        .maybeSingle()
-      const row = data as { name?: string, warehouses?: { name?: string } | null } | null
-      if (row?.name) {
-        const wh = row.warehouses?.name
-        return wh ? `شونة ${wh}: ${row.name}` : row.name
-      }
-      return 'ربع'
-    }
-    const table
-      = kind === 'store'
-        ? 'stores'
-        : kind === 'mekla'
-          ? 'meklas'
-          : 'clients'
-    const { data } = await client.from(table).select('name').eq('id', id).maybeSingle()
-    const name = data?.name || '—'
-    return `${locationKindLabel(kind)}: ${name}`
-  }
-
   const accountTypeName = ref<string | null>(null)
+  const selectedSectionId = ref('all')
+  const route = useRoute()
+  const queryProductId = () => {
+    const q = route.query.product
+    return typeof q === 'string' && q.trim() ? q.trim() : ''
+  }
+  const selectedProductId = ref(queryProductId() || '')
 
-  const load = async () => {
-    const id = toValue(warehouseId)
-    if (!id) {
-      loading.value = false
-      return
-    }
-    loading.value = true
-    try {
-      const [whRes, seasonRes, sectionsRes, sectionsListRes] = await Promise.all([
-        client
-          .from('warehouses')
-          .select('*, account_types(name)')
-          .eq('id', id)
-          .maybeSingle(),
-        client.from('seasons').select('id, name').eq('is_active', true).maybeSingle(),
-        client.rpc('section_balances', { p_warehouse_id: id }),
-        client
-          .from('warehouse_sections')
-          .select('id, name, notes, is_active')
-          .eq('warehouse_id', id)
-          .eq('is_active', true)
-          .order('name')
-      ])
-      if (whRes.error) throw whRes.error
-      if (seasonRes.error) throw seasonRes.error
-      if (sectionsRes.error) throw sectionsRes.error
-      if (sectionsListRes.error) throw sectionsListRes.error
+  const applyBundle = (bundle: WarehouseDetailBundle | undefined) => {
+    if (!bundle) return
+    warehouse.value = bundle.warehouse
+    accountTypeName.value = bundle.account_type_name
+    activeSeasonId.value = bundle.season?.id ?? null
+    activeSeasonName.value = bundle.season?.name ?? null
+    allSections.value = bundle.sections
+    sectionCards.value = buildSectionCards(bundle)
 
-      const raw = whRes.data as
-        | (WarehouseRow & { account_types?: { name: string } | null })
-        | null
-      if (raw) {
-        const { account_types: atJoin, ...wh } = raw
-        warehouse.value = wh
-        accountTypeName.value = atJoin?.name ?? null
-      } else {
-        warehouse.value = null
-        accountTypeName.value = null
-      }
-      activeSeasonName.value = seasonRes.data?.name ?? null
-      activeSeasonId.value = seasonRes.data?.id ?? null
-      allSections.value = sectionsListRes.data ?? []
-      const balances = sectionsRes.data ?? []
-      const sectionIds = [...new Set([
-        ...balances.map(s => s.section_id),
-        ...allSections.value.map(s => s.id)
-      ])]
-      const pairKeys = balances.map(s =>
-        sectionProductKey(s.section_id, s.product_id, s.status_id)
+    if (
+      selectedSectionId.value !== 'all'
+      && !sectionCards.value.some(
+        s => sectionProductKey(s.section_id, s.product_id, s.status_id) === selectedSectionId.value
       )
-      const sectionNameById = new Map<string, string>([
-        ...balances.map(s => [s.section_id, s.section_name] as const),
-        ...allSections.value.map(s => [s.id, s.name] as const)
-      ])
-
-      const incomingBySection = new Map<string, SectionIncomingRow[]>()
-      const outgoingBySection = new Map<string, SectionOutgoingRow[]>()
-      for (const key of pairKeys) {
-        incomingBySection.set(key, [])
-        outgoingBySection.set(key, [])
-      }
-
-      if (seasonRes.data?.id && sectionIds.length) {
-        const [deliveriesRes, outMovRes, inMovRes] = await Promise.all([
-          client
-            .from('warehouse_deliveries')
-            .select('id, section_id, product_id, status_id, delivery_date, quantity_kg, notes, created_at, suppliers(name)')
-            .eq('warehouse_id', id)
-            .eq('season_id', seasonRes.data.id)
-            .eq('is_cancelled', false)
-            .order('delivery_date', { ascending: true })
-            .order('created_at', { ascending: true }),
-          client
-            .from('stock_movements')
-            .select('*, stock_statuses(name)')
-            .eq('season_id', seasonRes.data.id)
-            .eq('from_kind', 'section')
-            .in('from_id', sectionIds)
-            .eq('is_cancelled', false)
-            .order('movement_date', { ascending: true })
-            .order('created_at', { ascending: true }),
-          client
-            .from('stock_movements')
-            .select('*')
-            .eq('season_id', seasonRes.data.id)
-            .eq('to_kind', 'section')
-            .in('to_id', sectionIds)
-            .eq('is_cancelled', false)
-            .order('movement_date', { ascending: true })
-            .order('created_at', { ascending: true })
-        ])
-        if (deliveriesRes.error) throw deliveriesRes.error
-        if (outMovRes.error) throw outMovRes.error
-        if (inMovRes.error) throw inMovRes.error
-
-        for (const d of deliveriesRes.data ?? []) {
-          const list = incomingBySection.get(
-            sectionProductKey(d.section_id, d.product_id, d.status_id)
-          )
-          if (!list) continue
-          const supplierName = (d as { suppliers?: { name?: string } | null }).suppliers?.name
-          list.push({
-            id: d.id,
-            date: d.delivery_date,
-            created_at: d.created_at || d.delivery_date,
-            source: supplierName || 'تسليم',
-            quantity_kg: Number(d.quantity_kg),
-            qty_before: 0,
-            qty_after: 0,
-            notes: d.notes,
-            kind: 'delivery'
-          })
-        }
-
-        const nameCache = new Map<string, string>()
-        const cachedName = async (kind: StockLocationKind, locId: string) => {
-          const key = `${kind}:${locId}`
-          if (nameCache.has(key)) return nameCache.get(key)!
-          const label = await resolveLocationName(kind, locId, sectionNameById)
-          nameCache.set(key, label)
-          return label
-        }
-
-        for (const m of (outMovRes.data ?? []) as Array<
-          MovementRow & { stock_statuses?: { name?: string } | null }
-        >) {
-          const list = outgoingBySection.get(
-            sectionProductKey(m.from_id, m.product_id, m.status_id)
-          )
-          if (!list) continue
-          list.push({
-            id: m.id,
-            date: m.movement_date,
-            created_at: m.created_at || m.movement_date,
-            destination: await cachedName(m.to_kind, m.to_id),
-            status_name: m.stock_statuses?.name ?? null,
-            quantity_kg: Number(m.quantity_kg),
-            qty_before: 0,
-            qty_after: 0,
-            notes: m.notes,
-            product_id: m.product_id,
-            status_id: m.status_id,
-            from_kind: m.from_kind,
-            from_id: m.from_id,
-            to_kind: m.to_kind,
-            to_id: m.to_id
-          })
-        }
-
-        for (const m of (inMovRes.data ?? []) as MovementRow[]) {
-          const list = incomingBySection.get(
-            sectionProductKey(m.to_id, m.product_id, m.status_id)
-          )
-          if (!list) continue
-          list.push({
-            id: m.id,
-            date: m.movement_date,
-            created_at: m.created_at || m.movement_date,
-            source: await cachedName(m.from_kind, m.from_id),
-            quantity_kg: Number(m.quantity_kg),
-            qty_before: 0,
-            qty_after: 0,
-            notes: m.notes,
-            kind: 'movement',
-            product_id: m.product_id,
-            status_id: m.status_id,
-            from_kind: m.from_kind,
-            from_id: m.from_id,
-            to_kind: m.to_kind,
-            to_id: m.to_id
-          })
-        }
-
-        for (const key of pairKeys) {
-          const balanced = applySectionRunningBalances(
-            incomingBySection.get(key) ?? [],
-            outgoingBySection.get(key) ?? []
-          )
-          balanced.incoming.sort((a, b) => {
-            const byDate = a.date.localeCompare(b.date)
-            if (byDate !== 0) return byDate
-            return a.created_at.localeCompare(b.created_at)
-          })
-          balanced.outgoing.sort((a, b) => {
-            const byDate = a.date.localeCompare(b.date)
-            if (byDate !== 0) return byDate
-            return a.created_at.localeCompare(b.created_at)
-          })
-          incomingBySection.set(key, balanced.incoming)
-          outgoingBySection.set(key, balanced.outgoing)
-        }
-      }
-
-      sectionCards.value = balances.map(b => ({
-        ...b,
-        incoming: incomingBySection.get(
-          sectionProductKey(b.section_id, b.product_id, b.status_id)
-        ) ?? [],
-        outgoing: outgoingBySection.get(
-          sectionProductKey(b.section_id, b.product_id, b.status_id)
-        ) ?? []
-      }))
-
-      if (seasonRes.data?.id) {
-        const expensesRes = await client
-          .from('warehouse_expenses')
-          .select('*')
-          .eq('warehouse_id', id)
-          .eq('season_id', seasonRes.data.id)
-          .order('payment_date', { ascending: true })
-          .order('created_at', { ascending: true })
-        if (expensesRes.error) throw expensesRes.error
-        expenses.value = (expensesRes.data ?? []) as WarehouseExpense[]
-      } else {
-        expenses.value = []
-      }
-
-      if (
-        selectedSectionId.value !== 'all'
-        && !sectionCards.value.some(
-          s => sectionProductKey(s.section_id, s.product_id, s.status_id) === selectedSectionId.value
-        )
-      ) {
-        selectedSectionId.value = 'all'
-      }
-    } catch (e: any) {
-      toast.add({ title: 'تعذر تحميل الشونة', description: e.message, color: 'error' })
-    } finally {
-      loading.value = false
+    ) {
+      selectedSectionId.value = 'all'
     }
   }
+
+  watch(
+    () => detailQuery.data.value,
+    (bundle) => {
+      applyBundle(bundle)
+    },
+    { immediate: true }
+  )
+
+  watch(
+    () => detailQuery.error.value,
+    (err) => {
+      if (!err) return
+      toast.add({
+        title: 'تعذر تحميل الشونة',
+        description: err.message,
+        color: 'error'
+      })
+    }
+  )
+
+  const invalidateAfterMutation = async () => {
+    const id = toValue(warehouseId)
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.warehouseDetail(id, detailQuery.seasonId.value)
+      }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.warehouseBalances(detailQuery.seasonId.value)
+      })
+    ])
+  }
+
+  const load = invalidateAfterMutation
 
   const openCreateSection = () => {
     editingSection.value = null
@@ -584,117 +273,6 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }
   }
 
-  const expensesTotal = computed(() =>
-    expenses.value.reduce((sum, e) => sum + Number(e.amount), 0)
-  )
-
-  const isExpenseRowEditing = (row: WarehouseExpense) =>
-    !!editingExpense.value && editingExpense.value.id === row.id
-
-  const resetExpenseForm = () => {
-    expenseForm.payment_date = todayIsoDate()
-    expenseForm.amount = ''
-    expenseForm.notes = ''
-  }
-
-  const cancelExpenseInline = () => {
-    isExpenseCreating.value = false
-    editingExpense.value = null
-    resetExpenseForm()
-  }
-
-  const openCreateExpense = () => {
-    if (!activeSeasonId.value) {
-      toast.add({ title: 'لا يوجد موسم نشط', color: 'warning' })
-      return
-    }
-    editingExpense.value = null
-    isExpenseCreating.value = true
-    resetExpenseForm()
-  }
-
-  const openEditExpense = (row: WarehouseExpense) => {
-    isExpenseCreating.value = false
-    editingExpense.value = row
-    expenseForm.payment_date = row.payment_date
-    expenseForm.amount = String(row.amount)
-    expenseForm.notes = row.notes || ''
-  }
-
-  const onExpenseKey = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      void saveExpense()
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      cancelExpenseInline()
-    }
-  }
-
-  const saveExpense = async () => {
-    const id = toValue(warehouseId)
-    if (!id || !activeSeasonId.value) {
-      toast.add({ title: 'لا يوجد موسم نشط', color: 'warning' })
-      return
-    }
-    if (!expenseForm.payment_date) {
-      toast.add({ title: 'التاريخ مطلوب', color: 'warning' })
-      return
-    }
-    const amount = parseDecimal(expenseForm.amount)
-    if (!(amount > 0)) {
-      toast.add({ title: 'المبلغ يجب أن يكون أكبر من صفر', color: 'warning' })
-      return
-    }
-
-    const payload = {
-      warehouse_id: id,
-      season_id: activeSeasonId.value,
-      payment_date: expenseForm.payment_date,
-      amount,
-      notes: expenseForm.notes.trim() || null
-    }
-
-    saving.value = true
-    try {
-      if (editingExpense.value) {
-        const { error } = await client
-          .from('warehouse_expenses')
-          .update(payload)
-          .eq('id', editingExpense.value.id)
-        if (error) throw error
-        toast.add({ title: 'تم تحديث المصروف', color: 'success' })
-      } else {
-        const { error } = await client.from('warehouse_expenses').insert(payload)
-        if (error) throw error
-        toast.add({ title: 'تم تسجيل المصروف', color: 'success' })
-      }
-      cancelExpenseInline()
-      await load()
-    } catch (e: any) {
-      toast.add({ title: 'فشل الحفظ', description: e.message, color: 'error' })
-    } finally {
-      saving.value = false
-    }
-  }
-
-  const deleteExpense = async (row: WarehouseExpense) => {
-    const ok = await askConfirm('حذف المصروف نهائياً؟')
-    if (!ok) return
-    saving.value = true
-    try {
-      const { error } = await client.from('warehouse_expenses').delete().eq('id', row.id)
-      if (error) throw error
-      toast.add({ title: 'تم الحذف', color: 'success' })
-      if (editingExpense.value?.id === row.id) cancelExpenseInline()
-      await load()
-    } catch (e: any) {
-      toast.add({ title: 'فشل الحذف', description: e.message, color: 'error' })
-    } finally {
-      saving.value = false
-    }
-  }
-
   const ensureDestinations = async () => {
     const currentId = toValue(warehouseId)
     const productId = selectedProductId.value || transferFromSection.value?.product_id || ''
@@ -755,6 +333,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     transferForm.to_warehouse_id = ''
     transferForm.to_id = ''
     transferForm.status_id = statusId || stockStatuses.value[0]?.id || ''
+    transferForm.to_status_id = transferForm.status_id
     transferForm.quantity_kg = ''
     transferForm.movement_date = todayIsoDate()
     transferForm.notes = ''
@@ -851,6 +430,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     notes: string | null
     product_id: string
     status_id: string | null
+    to_status_id?: string | null
     from_kind: StockLocationKind
     from_id: string
     to_kind: StockLocationKind
@@ -915,6 +495,8 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
       = row.to_kind === 'store' ? 'store' : row.to_kind === 'mekla' ? 'mekla' : 'warehouse'
     transferForm.to_kind = uiKind
     transferForm.status_id = row.status_id || stockStatuses.value[0]?.id || ''
+    transferForm.to_status_id
+      = row.to_status_id || transferForm.status_id || stockStatuses.value[0]?.id || ''
     transferForm.quantity_kg = String(row.quantity_kg)
     transferForm.movement_date = row.date
     transferForm.notes = row.notes || ''
@@ -1008,7 +590,11 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
       return
     }
     if (!transferForm.status_id) {
-      toast.add({ title: 'اختر الحالة', color: 'warning' })
+      toast.add({ title: 'اختر من الحالة', color: 'warning' })
+      return
+    }
+    if (!transferForm.to_status_id) {
+      toast.add({ title: 'اختر إلى الحالة', color: 'warning' })
       return
     }
     if (transferForm.to_kind === 'warehouse' && !transferForm.to_warehouse_id) {
@@ -1047,6 +633,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
           .from('stock_movements')
           .update({
             status_id: transferForm.status_id,
+            to_status_id: transferForm.to_status_id,
             movement_date: transferForm.movement_date,
             quantity_kg: qty,
             to_kind: toKind,
@@ -1083,6 +670,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
           season_id: activeSeasonId.value!,
           product_id: line.product_id,
           status_id: line.status_id,
+          to_status_id: transferForm.to_status_id,
           movement_date: transferForm.movement_date,
           quantity_kg: line.qty,
           from_kind: 'section' as const,
@@ -1109,18 +697,9 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }
   }
 
-  const selectedSectionId = ref('all')
-  const route = useRoute()
-  const queryProductId = () => {
-    const q = route.query.product
-    return typeof q === 'string' && q.trim() ? q.trim() : ''
-  }
-  const selectedProductId = ref(queryProductId() || '')
-
   watch(() => toValue(warehouseId), () => {
     selectedSectionId.value = 'all'
     selectedProductId.value = queryProductId() || ''
-    load()
   })
 
   watch(
@@ -1130,8 +709,6 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
       if (fromQuery) selectedProductId.value = fromQuery
     }
   )
-
-  onMounted(load)
 
   const productOptions = computed(() => {
     const map = new Map<string, string>()
@@ -1337,6 +914,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
         season_id: activeSeasonId.value!,
         product_id: line.product_id,
         status_id: line.status_id,
+        to_status_id: line.status_id,
         movement_date: todayIsoDate(),
         quantity_kg: line.qty,
         from_kind: 'section' as const,
@@ -1364,7 +942,11 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   const sectionFilterOptions = computed(() => [
     { label: 'كل الأرباع', value: 'all' },
     ...productFilteredCards.value.map(s => ({
-      label: `${s.section_name} — ${s.product_name || '—'}`,
+      label: [
+        s.section_name,
+        s.status_name || null,
+        s.product_name || null
+      ].filter(Boolean).join(' — '),
       value: sectionProductKey(s.section_id, s.product_id, s.status_id)
     }))
   ])
@@ -1416,6 +998,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
           notes: row.notes,
           product_id: row.product_id,
           status_id: row.status_id,
+          to_status_id: row.to_status_id ?? row.status_id,
           from_kind: row.from_kind,
           from_id: row.from_id,
           to_kind: row.to_kind,
@@ -1448,17 +1031,13 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   return {
     loading,
     saving,
+    isRefreshing,
     warehouse,
     accountTypeName,
     sectionCards,
     filteredSectionCards,
     warehouseLedgerCard,
     warehouseStats,
-    expenses,
-    expensesTotal,
-    expenseForm,
-    isExpenseCreating,
-    isExpenseRowEditing,
     selectedSectionId,
     selectedProductId,
     productOptions,
@@ -1480,12 +1059,6 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     openEditSection,
     saveSection,
     softDeleteSection,
-    openCreateExpense,
-    openEditExpense,
-    cancelExpenseInline,
-    onExpenseKey,
-    saveExpense,
-    deleteExpense,
     openTransfer,
     openWarehouseTransfer,
     openEditMovement,
@@ -1497,9 +1070,6 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     saveWasteAllRemaining,
     setTransferQty: (raw: string) => {
       transferForm.quantity_kg = normalizeDecimalInput(raw)
-    },
-    setExpenseAmount: (raw: string) => {
-      expenseForm.amount = normalizeDecimalInput(raw)
     },
     load
   }

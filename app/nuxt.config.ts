@@ -13,6 +13,7 @@ export default defineNuxtConfig({
   imports: {
     dirs: [
       'composables',
+      'composables/queries',
       'utils',
       'features/**/composables',
       'features/**/utils'
@@ -34,7 +35,8 @@ export default defineNuxtConfig({
     { path: '~/features/meklas/components', pathPrefix: false },
     { path: '~/features/products/components', pathPrefix: false },
     { path: '~/features/stock-statuses/components', pathPrefix: false },
-    { path: '~/features/seasons/components', pathPrefix: false }
+    { path: '~/features/seasons/components', pathPrefix: false },
+    { path: '~/features/costs/components', pathPrefix: false }
   ],
 
   app: {

@@ -43,6 +43,11 @@ const links = [
     to: '/meklas'
   },
   {
+    label: 'مصروفات الموسم',
+    icon: 'i-lucide-wallet',
+    to: '/costs'
+  },
+  {
     label: 'إحصائيات المخازن',
     icon: 'i-lucide-chart-pie',
     to: '/location-stats'
@@ -75,7 +80,7 @@ const logout = async () => {
 <template>
   <div class="min-h-screen bg-default flex">
     <aside
-      class="shrink-0 border-e border-default bg-elevated/50 flex flex-col gap-4 transition-all duration-200 overflow-hidden"
+      class="shrink-0 border-e border-default bg-elevated flex flex-col gap-4 transition-all duration-200 overflow-hidden"
       :class="sidebarOpen ? 'w-64 p-4' : 'w-16 p-2'"
     >
       <div :class="sidebarOpen ? '' : 'flex justify-center pt-1'">

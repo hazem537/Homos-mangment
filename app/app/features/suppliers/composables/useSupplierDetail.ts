@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/vue-query";
 import type {
   Database,
   DeliveryCostKind,
@@ -16,59 +17,53 @@ import {
   nolonFromKg,
   NOLON_RATE_PER_TON,
   paymentsForDelivery,
-  sumDeliveryCostPaid,
   type DeliveryCostPaymentLite,
 } from "~/utils/deliveryCosts";
+import { queryKeys } from "~/composables/queries/queryKeys";
+import { useSupplierDetailQuery } from "~/composables/queries/useSupplierDetailQuery";
+import type {
+  SeasonLite,
+  StatusLite,
+  StoreLite,
+  SupplierDelivery,
+  SupplierDue,
+  SupplierDetailBundle,
+  SupplierLite,
+  SupplierProductStat,
+  SupplierPurchase,
+  SupplierTransfer,
+  ProductLite,
+  WarehouseLite,
+  WarehouseSectionLite,
+} from "~/features/suppliers/utils/supplierDetailBundle";
 
-export type SupplierDue =
-  Database["public"]["Functions"]["supplier_due"]["Returns"][number];
+export type {
+  SupplierDelivery,
+  SupplierDue,
+  SupplierPurchase,
+  SupplierTransfer,
+};
 
-export type SupplierPurchase =
-  Database["public"]["Views"]["purchase_ledger"]["Row"];
-export type SupplierTransfer =
-  Database["public"]["Tables"]["cash_transfers"]["Row"];
 export type DeliveryDestinationKind = "warehouse" | "store";
-
-export type SupplierDelivery =
-  Database["public"]["Tables"]["warehouse_deliveries"]["Row"] & {
-    warehouses?: { id: string; name: string } | null;
-    warehouse_sections?: { id: string; name: string; warehouse_id: string } | null;
-    stores?: { id: string; name: string } | null;
-    products?: { id: string; name: string } | null;
-    stock_statuses?: { id: string; name: string } | null;
-  };
-
-type WarehouseSectionLite = {
-  id: string;
-  name: string;
-  warehouse_id: string;
-};
-
-type SeasonLite = { id: string; name: string; ardab_factor: number };
-type WarehouseLite = { id: string; name: string; account_type_id: string };
-type StoreLite = { id: string; name: string };
-type ProductLite = { id: string; name: string };
-type StatusLite = { id: string; name: string; product_id: string };
-type SupplierLite = {
-  id: string;
-  name: string;
-  notes: string | null;
-  is_active: boolean;
-  account_type_id: string;
-  account_type_name: string;
-};
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
+export function useSupplierDetail(
+  supplierId: MaybeRefOrGetter<string>,
+  productId: MaybeRefOrGetter<string>,
+) {
   const client = useSupabaseClient<Database>();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const toast = useToast();
   const { confirm: askConfirm } = useConfirmDialog();
   const { kgToArdab, totalPrice } = useArdab();
 
-  const loading = ref(true);
+  const detailQuery = useSupplierDetailQuery(supplierId, productId);
+  const loading = computed(() => detailQuery.isInitialLoading.value);
+  const isRefreshing = computed(() => detailQuery.isRefreshing.value);
   const saving = ref(false);
   const supplier = ref<SupplierLite | null>(null);
   const due = ref<SupplierDue | null>(null);
@@ -83,9 +78,12 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const transfers = ref<SupplierTransfer[]>([]);
   const deliveries = ref<SupplierDelivery[]>([]);
   const costPayments = ref<DeliveryCostPaymentLite[]>([]);
+  const productStats = ref<SupplierProductStat[]>([]);
 
-  /** Excel-sheet style: one product at a time on this page */
-  const selectedProductId = ref("");
+  /** Profile product from URL / supplier row (detail is always one product). */
+  const selectedProductId = computed(
+    () => supplier.value?.product_id || toValue(productId) || "",
+  );
 
   /** Inline ledger row (Excel-style) instead of create/edit modals */
   const purchaseInlineOpen = ref(false);
@@ -241,35 +239,59 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     syncStoreSelection();
   };
 
-  const productOptions = computed(() =>
-    products.value.map((p) => ({ label: p.name, value: p.id })),
-  );
+  const productOptions = computed(() => {
+    const pid = selectedProductId.value;
+    const name =
+      supplier.value?.product_name
+      || products.value.find((p) => p.id === pid)?.name
+      || "—";
+    return pid ? [{ label: name, value: pid }] : [];
+  });
 
   const reloadStatuses = async () => {
     const { data, error } = await client
       .from("stock_statuses")
-      .select("id, name, product_id")
+      .select("id, name, product_id, is_default")
       .eq("is_active", true)
       .order("name");
     if (error) throw error;
     stockStatuses.value = data ?? [];
   };
 
-  /** Delivery no longer asks for status — use product default (بدون غربلة). */
+  /** Delivery uses the product's explicit default status (is_default). */
   const resolveStatusIdForProduct = async (productId: string) => {
     if (!productId) return null;
+
+    const { data: defaultRow, error: defaultError } = await client
+      .from("stock_statuses")
+      .select("id")
+      .eq("product_id", productId)
+      .eq("is_active", true)
+      .eq("is_default", true)
+      .maybeSingle();
+    if (defaultError) throw defaultError;
+    if (defaultRow?.id) return defaultRow.id;
+
     let forProduct = stockStatuses.value.filter((s) => s.product_id === productId);
     if (!forProduct.length) {
       await client.from("stock_statuses").insert([
-        { product_id: productId, name: "بدون غربلة", notes: "الحالة الافتراضية" },
-        { product_id: productId, name: "مغربل", notes: null },
+        {
+          product_id: productId,
+          name: "بدون غربلة",
+          notes: "الحالة الافتراضية",
+          is_default: true,
+        },
+        { product_id: productId, name: "مغربل", notes: null, is_default: false },
       ]);
       await reloadStatuses();
       forProduct = stockStatuses.value.filter((s) => s.product_id === productId);
+      const createdDefault = forProduct.find((s) => s.is_default);
+      if (createdDefault?.id) return createdDefault.id;
     }
-    const preferred = forProduct.find(
-      (s) => s.name.trim() === "بدون غربلة",
-    );
+
+    const preferred =
+      forProduct.find((s) => s.is_default)
+      || forProduct.find((s) => s.name.trim() === "بدون غربلة");
     return preferred?.id || forProduct[0]?.id || null;
   };
 
@@ -298,12 +320,17 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const remainingKgOfProduct = (
     productId: string,
     excludeDeliveryId?: string | null,
-  ) =>
-    Number(
+  ) => {
+    if (!excludeDeliveryId) {
+      const stat = productStats.value.find((s) => s.product_id === productId);
+      if (stat) return Number(stat.remaining_kg || 0);
+    }
+    return Number(
       (purchasedKgOf(productId) - deliveredKgOf(productId, excludeDeliveryId)).toFixed(
         4,
       ),
     );
+  };
 
   const productNameById = computed(() => {
     const map = new Map<string, string>();
@@ -314,26 +341,14 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const productNameOf = (productId: string | null | undefined) =>
     (productId && productNameById.value.get(productId)) || "—";
 
-  const filteredPurchases = computed(() =>
-    selectedProductId.value
-      ? purchases.value.filter((p) => p.product_id === selectedProductId.value)
-      : [],
-  );
+  const filteredPurchases = computed(() => purchases.value);
+  const filteredDeliveries = computed(() => deliveries.value);
+  const filteredTransfers = computed(() => transfers.value);
 
-  const filteredDeliveries = computed(() =>
-    selectedProductId.value
-      ? deliveries.value.filter((d) => d.product_id === selectedProductId.value)
-      : [],
-  );
-
-  const filteredTransfers = computed(() =>
-    selectedProductId.value
-      ? transfers.value.filter((t) => t.product_id === selectedProductId.value)
-      : [],
-  );
-
-  const selectedProductName = computed(() =>
-    productNameOf(selectedProductId.value),
+  const selectedProductName = computed(
+    () =>
+      supplier.value?.product_name
+      || productNameOf(selectedProductId.value),
   );
 
   const selectedProductRemainingKg = computed(() =>
@@ -341,23 +356,6 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       ? remainingKgOfProduct(selectedProductId.value)
       : 0,
   );
-
-  const syncSelectedProduct = () => {
-    const options = productOptions.value;
-    if (!options.length) {
-      selectedProductId.value = "";
-      return;
-    }
-    if (
-      selectedProductId.value
-      && options.some((o) => o.value === selectedProductId.value)
-    ) {
-      return;
-    }
-    const purchasedIds = new Set(purchases.value.map((p) => p.product_id));
-    const firstPurchased = options.find((o) => purchasedIds.has(o.value));
-    selectedProductId.value = firstPurchased?.value || options[0]?.value || "";
-  };
 
   const onSelectedProductChange = () => {
     if (!selectedProductId.value) return;
@@ -415,67 +413,63 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     syncSectionForWarehouse();
   };
 
+  const selectedProductStat = computed(() => {
+    const pid = selectedProductId.value;
+    if (!pid) return null;
+    return productStats.value.find((s) => s.product_id === pid) ?? null;
+  });
+
+  /** Prefer RPC product_stats; fall back only if stats row missing. */
   const purchasePriceStats = computed(() => {
-    const rows = filteredPurchases.value;
-    const productDeliveries = filteredDeliveries.value;
-    const nolonTotal = productDeliveries.reduce(
-      (sum, d) => sum + Number(d.nolon_total || 0),
-      0,
-    );
-    const nathriyatTotal = productDeliveries.reduce(
-      (sum, d) => sum + Number(d.nathriyat_total || 0),
-      0,
-    );
-    // Commission is supplier-wide money — not included in per-product costed avg
-    if (!rows.length) {
-      const costedTotal = nolonTotal + nathriyatTotal;
-      return { avgPrice: 0, lastPrice: 0, costedTotal };
+    const stat = selectedProductStat.value;
+    if (stat) {
+      return {
+        avgPrice: Number(stat.avg_price_costed || 0),
+        lastPrice: Number(stat.last_price || 0),
+        costedTotal:
+          Number(stat.purchases_total || 0)
+          + Number(stat.nolon_total || 0)
+          + Number(stat.nathriyat_total || 0),
+      };
     }
-    const totalArdab = rows.reduce((sum, p) => sum + Number(p.ardab), 0);
-    const purchasesTotal = rows.reduce(
-      (sum, p) => sum + Number(p.total_price),
-      0,
-    );
-    const costedTotal = purchasesTotal + nolonTotal + nathriyatTotal;
-    const avgPrice =
-      totalArdab > 0 ? Number((costedTotal / totalArdab).toFixed(4)) : 0;
-    const lastPrice = Number(rows[rows.length - 1]?.price_per_ardab ?? 0);
-    return { avgPrice, lastPrice, costedTotal };
+    return { avgPrice: 0, lastPrice: 0, costedTotal: 0 };
   });
 
   const transferTotals = computed(() => {
-    const rows = filteredTransfers.value;
-    const commission = rows
-      .filter((t) => t.kind === "commission")
-      .reduce((sum, t) => sum + Number(t.amount), 0);
-    const againstPurchase = rows
-      .filter((t) => t.kind !== "commission")
-      .reduce((sum, t) => sum + Number(t.amount), 0);
-    return {
-      amount: againstPurchase + commission,
-      againstPurchase,
-      commission,
-      count: rows.length,
-    };
+    const stat = selectedProductStat.value;
+    if (stat) {
+      const againstPurchase = Number(stat.transfers_total || 0);
+      const commission = Number(stat.commission_total || 0);
+      return {
+        amount: againstPurchase + commission,
+        againstPurchase,
+        commission,
+        count: filteredTransfers.value.length,
+      };
+    }
+    return { amount: 0, againstPurchase: 0, commission: 0, count: 0 };
   });
 
   const purchaseTotals = computed(() => {
-    const rows = filteredPurchases.value;
-    const kg = rows.reduce((sum, p) => sum + Number(p.quantity_kg), 0);
-    const ardab = rows.reduce((sum, p) => sum + Number(p.ardab), 0);
-    const price = rows.reduce((sum, p) => sum + Number(p.total_price), 0);
-    const lastAvg = Number(rows[rows.length - 1]?.running_avg_price ?? 0);
-    return {
-      kg,
-      ardab,
-      price,
-      avgPrice:
-        lastAvg > 0
-          ? lastAvg
-          : ardab > 0
-            ? Number((price / ardab).toFixed(4))
-            : 0,
-    };
+    const stat = selectedProductStat.value;
+    if (stat) {
+      const rows = filteredPurchases.value;
+      const lastAvg = Number(rows[rows.length - 1]?.running_avg_price ?? 0);
+      const price = Number(stat.purchases_total || 0);
+      const ardab = Number(stat.purchased_ardab || 0);
+      return {
+        kg: Number(stat.purchased_kg || 0),
+        ardab,
+        price,
+        avgPrice:
+          lastAvg > 0
+            ? lastAvg
+            : ardab > 0
+              ? Number((price / ardab).toFixed(4))
+              : 0,
+      };
+    }
+    return { kg: 0, ardab: 0, price: 0, avgPrice: 0 };
   });
 
   /** Display avg from purchase_ledger view (DB source of truth) */
@@ -503,86 +497,60 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   });
 
   const deliveryTotals = computed(() => {
-    const rows = filteredDeliveries.value;
-    const deliveryIds = new Set(rows.map((d) => d.id));
-    const kg = rows.reduce((sum, d) => sum + Number(d.quantity_kg), 0);
-    const ardab = rows.reduce((sum, d) => sum + Number(d.ardab), 0);
-    const nolon = rows.reduce((sum, d) => sum + Number(d.nolon_total || 0), 0);
-    const nathriyat = rows.reduce(
-      (sum, d) => sum + Number(d.nathriyat_total || 0),
-      0,
-    );
-    const nolonPaid = costPayments.value
-      .filter(
-        (p) =>
-          p.kind === "nolon"
-          && !p.is_cancelled
-          && deliveryIds.has(p.delivery_id),
-      )
-      .reduce((sum, p) => sum + Number(p.amount), 0);
-    const nathriyatPaid = costPayments.value
-      .filter(
-        (p) =>
-          p.kind === "nathriyat"
-          && !p.is_cancelled
-          && deliveryIds.has(p.delivery_id),
-      )
-      .reduce((sum, p) => sum + Number(p.amount), 0);
+    const stat = selectedProductStat.value;
+    if (stat) {
+      const nolon = Number(stat.nolon_total || 0);
+      const nathriyat = Number(stat.nathriyat_total || 0);
+      const nolonPaid = Number(stat.nolon_paid || 0);
+      const nathriyatPaid = Number(stat.nathriyat_paid || 0);
+      const rows = filteredDeliveries.value;
+      const ardab = rows.reduce((sum, d) => sum + Number(d.ardab), 0);
+      return {
+        kg: Number(stat.delivered_kg || 0),
+        ardab,
+        nolon,
+        nolonPaid,
+        nathriyat,
+        nathriyatPaid,
+        costTotal: nolon + nathriyat,
+        costPaid: nolonPaid + nathriyatPaid,
+        costNeeded: deliveryCostRest(nolon + nathriyat, nolonPaid + nathriyatPaid),
+      };
+    }
     return {
-      kg,
-      ardab,
-      nolon,
-      nolonPaid,
-      nathriyat,
-      nathriyatPaid,
-      costTotal: nolon + nathriyat,
-      costPaid: nolonPaid + nathriyatPaid,
-      costNeeded: deliveryCostRest(nolon + nathriyat, nolonPaid + nathriyatPaid),
+      kg: 0,
+      ardab: 0,
+      nolon: 0,
+      nolonPaid: 0,
+      nathriyat: 0,
+      nathriyatPaid: 0,
+      costTotal: 0,
+      costPaid: 0,
+      costNeeded: 0,
     };
   });
 
   /**
-   * Running purchase-kg need around each delivery (per product of that row):
-   * before = remaining for that product before this transfer,
-   * after = remaining after it.
-   * While editing a row, uses live form kg for that row.
+   * Prefer RPC kg_before/kg_after. Recompute only while a row is being edited.
    */
-  const deliveryKgRunningById = computed(() => {
-    const map = new Map<string, { before: number; after: number }>();
+  const deliveryKgRunningOf = (deliveryId: string) => {
     const editingId = editingDelivery.value?.id ?? null;
-    const editingPid = editingId ? deliveryForm.product_id : null;
-
-    // Remaining per product before walking deliveries in order
-    const remainingByProduct = new Map<string, number>();
-    for (const p of purchases.value) {
-      const cur = remainingByProduct.get(p.product_id) || 0;
-      remainingByProduct.set(p.product_id, cur + Number(p.quantity_kg));
+    if (editingId && editingId === deliveryId) {
+      const pid = deliveryForm.product_id || editingDelivery.value?.product_id;
+      const before = pid
+        ? remainingKgOfProduct(pid, editingId)
+        : 0;
+      const after = Number(
+        (before - parseDecimal(deliveryForm.quantity_kg)).toFixed(4),
+      );
+      return { before, after };
     }
-
-    for (const d of deliveries.value) {
-      const pid =
-        editingId && d.id === editingId
-          ? deliveryForm.product_id || d.product_id
-          : d.product_id;
-      const transfer =
-        editingId && d.id === editingId
-          ? parseDecimal(deliveryForm.quantity_kg)
-          : Number(d.quantity_kg);
-      const before = Number((remainingByProduct.get(pid) ?? 0).toFixed(4));
-      const after = Number((before - transfer).toFixed(4));
-      map.set(d.id, { before, after });
-      remainingByProduct.set(pid, after);
-    }
-
-    // If editing changed product away from original, ensure map still updated
-    if (editingId && editingPid) {
-      /* already handled in loop when id matches */
-    }
-    return map;
-  });
-
-  const deliveryKgRunningOf = (deliveryId: string) =>
-    deliveryKgRunningById.value.get(deliveryId) ?? { before: 0, after: 0 };
+    const row = deliveries.value.find((d) => d.id === deliveryId);
+    return {
+      before: Number(row?.kg_before ?? 0),
+      after: Number(row?.kg_after ?? 0),
+    };
+  };
 
   /** Preview for new delivery row — remaining for selected product only. */
   const deliveryCreateKgRunning = computed(() => {
@@ -658,11 +626,21 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
     };
   });
 
-  const nolonPaidOf = (deliveryId: string) =>
-    sumDeliveryCostPaid(costPayments.value, deliveryId, "nolon");
+  const nolonPaidOf = (deliveryId: string) => {
+    const row = deliveries.value.find((d) => d.id === deliveryId);
+    if (row && row.nolon_paid != null) return Number(row.nolon_paid);
+    return costPayments.value
+      .filter((p) => p.delivery_id === deliveryId && p.kind === "nolon" && !p.is_cancelled)
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+  };
 
-  const nathriyatPaidOf = (deliveryId: string) =>
-    sumDeliveryCostPaid(costPayments.value, deliveryId, "nathriyat");
+  const nathriyatPaidOf = (deliveryId: string) => {
+    const row = deliveries.value.find((d) => d.id === deliveryId);
+    if (row && row.nathriyat_paid != null) return Number(row.nathriyat_paid);
+    return costPayments.value
+      .filter((p) => p.delivery_id === deliveryId && p.kind === "nathriyat" && !p.is_cancelled)
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+  };
 
   const nolonRestOf = (row: SupplierDelivery) =>
     deliveryCostRest(row.nolon_total, nolonPaidOf(row.id));
@@ -803,20 +781,9 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const openPurchaseCreate = () => {
     if (!ensureCanCreate()) return;
-    if (!products.value.length) {
-      toast.add({
-        title: "لا يوجد أصناف",
-        description: "أضف صنفاً قبل تسجيل شراء",
-        color: "warning",
-      });
-      return;
-    }
-    if (!selectedProductId.value) {
-      syncSelectedProduct();
-    }
     if (!selectedProductId.value) {
       toast.add({
-        title: "اختر الصنف أولاً",
+        title: "الصنف غير محدد لهذا الملف",
         color: "warning",
       });
       return;
@@ -846,7 +813,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const openTransferCreate = () => {
     if (!ensureCanCreate()) return;
     if (!selectedProductId.value) {
-      toast.add({ title: "اختر الصنف أولاً", color: "warning" });
+      toast.add({ title: "الصنف غير محدد لهذا الملف", color: "warning" });
       return;
     }
     if (!canAddTransfer.value) {
@@ -876,13 +843,13 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
   const openDeliveryCreate = async () => {
     if (!ensureCanCreate()) return;
     if (!selectedProductId.value) {
-      toast.add({ title: "اختر الصنف أولاً", color: "warning" });
+      toast.add({ title: "الصنف غير محدد لهذا الملف", color: "warning" });
       return;
     }
     if (!canAddDelivery.value) {
       toast.add({
         title: "لا يوجد باقي كجم لهذا الصنف",
-        description: "سجّل شراء لهذا الصنف أولاً أو اختر صنفاً آخر",
+        description: "سجّل شراء لهذا الصنف أولاً",
         color: "warning",
       });
       return;
@@ -1011,7 +978,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
         color: "success",
       });
       paymentModalOpen.value = false;
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({
         title: "فشل تسجيل الدفع",
@@ -1038,7 +1005,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
         .eq("id", payment.id);
       if (error) throw error;
       toast.add({ title: "تم حذف الدفعة", color: "success" });
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({ title: "فشل الحذف", description: e.message, color: "error" });
     } finally {
@@ -1048,15 +1015,12 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const savePurchase = async () => {
     if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return;
-    const productId =
-      editingPurchase.value?.product_id
-      || selectedProductId.value
-      || purchaseForm.product_id;
-    purchaseForm.product_id = productId;
+    const profileProductId = selectedProductId.value;
+    purchaseForm.product_id = profileProductId;
     const quantityKg = parseDecimal(purchaseForm.quantity_kg);
     const pricePerArdab = parseDecimal(purchaseForm.price_per_ardab);
-    if (!productId) {
-      toast.add({ title: "اختر الصنف", color: "warning" });
+    if (!profileProductId) {
+      toast.add({ title: "الصنف غير محدد لهذا الملف", color: "warning" });
       return;
     }
     if (!purchaseForm.purchase_date) {
@@ -1100,7 +1064,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       }
       purchaseInlineOpen.value = false;
       editingPurchase.value = null;
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({ title: "فشل الحفظ", description: e.message, color: "error" });
     } finally {
@@ -1110,10 +1074,9 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const saveTransfer = async () => {
     if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return;
-    const productId =
-      editingTransfer.value?.product_id || selectedProductId.value;
+    const productId = selectedProductId.value;
     if (!productId) {
-      toast.add({ title: "اختر الصنف أولاً", color: "warning" });
+      toast.add({ title: "الصنف غير محدد لهذا الملف", color: "warning" });
       return;
     }
     const amount = parseDecimal(transferForm.amount);
@@ -1156,7 +1119,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       }
       transferInlineOpen.value = false;
       editingTransfer.value = null;
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({ title: "فشل الحفظ", description: e.message, color: "error" });
     } finally {
@@ -1166,16 +1129,13 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
 
   const saveDelivery = async () => {
     if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return;
-    const productId =
-      editingDelivery.value?.product_id
-      || selectedProductId.value
-      || deliveryForm.product_id;
+    const productId = selectedProductId.value;
     deliveryForm.product_id = productId;
     const quantityKg = parseDecimal(deliveryForm.quantity_kg);
     const toStore = deliveryForm.destination_kind === "store";
 
     if (!productId) {
-      toast.add({ title: "اختر الصنف", color: "warning" });
+      toast.add({ title: "الصنف غير محدد لهذا الملف", color: "warning" });
       return;
     }
 
@@ -1380,7 +1340,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       }
       deliveryInlineOpen.value = false;
       editingDelivery.value = null;
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({ title: "فشل الحفظ", description: e.message, color: "error" });
     } finally {
@@ -1399,7 +1359,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
         .eq("id", row.id);
       if (error) throw error;
       toast.add({ title: "تم حذف الشراء", color: "success" });
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({ title: "فشل الحذف", description: e.message, color: "error" });
     } finally {
@@ -1418,7 +1378,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
         .eq("id", row.id);
       if (error) throw error;
       toast.add({ title: "تم الحذف", color: "success" });
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({ title: "فشل الحذف", description: e.message, color: "error" });
     } finally {
@@ -1437,7 +1397,7 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
         .eq("id", row.id);
       if (error) throw error;
       toast.add({ title: "تم الحذف", color: "success" });
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
       toast.add({ title: "فشل الحذف", description: e.message, color: "error" });
     } finally {
@@ -1477,186 +1437,122 @@ export function useSupplierDetail(supplierId: MaybeRefOrGetter<string>) {
       if (error) throw error;
       toast.add({ title: "تم تحديث المورد", color: "success" });
       supplierEditModalOpen.value = false;
-      await load();
+      await invalidateAfterMutation();
     } catch (e: any) {
-      toast.add({ title: "فشل الحفظ", description: e.message, color: "error" });
+      const code = e?.code as string | undefined;
+      const msg = String(e?.message || "");
+      const isDuplicateProfile =
+        code === "23505"
+        || msg.includes("suppliers_active_name_type_product_unique")
+        || /duplicate key/i.test(msg);
+      if (isDuplicateProfile) {
+        toast.add({
+          title: "ملف المورد موجود مسبقاً",
+          description:
+            "يوجد بالفعل مورد بنفس الاسم والنوع والصنف. غيّر الاسم أو النوع.",
+          color: "warning",
+        });
+      } else {
+        toast.add({ title: "فشل الحفظ", description: msg, color: "error" });
+      }
     } finally {
       saving.value = false;
     }
   };
 
-  const load = async () => {
-    const id = toValue(supplierId);
-    if (!id) {
-      loading.value = false;
-      return;
-    }
+  const applyBundle = (bundle: SupplierDetailBundle | undefined) => {
+    if (!bundle) return;
+    supplier.value = bundle.supplier;
+    activeSeason.value = bundle.season;
+    dueByProduct.value = bundle.due_by_product;
+    purchases.value = bundle.purchases;
+    transfers.value = bundle.transfers;
+    deliveries.value = bundle.deliveries;
+    costPayments.value = bundle.payments;
+    productStats.value = bundle.product_stats;
+    products.value = bundle.lookups.products;
+    warehouses.value = bundle.lookups.warehouses;
+    sections.value = bundle.lookups.sections;
+    stores.value = bundle.lookups.stores;
+    stockStatuses.value = bundle.lookups.stock_statuses;
+    due.value = dueByProduct.value[0] ?? null;
 
-    loading.value = true;
-    try {
-      const [supplierRes, seasonRes, warehousesRes, sectionsRes, productsRes, statusesRes] =
-        await Promise.all([
-          client
-            .from("suppliers")
-            .select("id, name, notes, is_active, account_type_id, account_types(name)")
-            .eq("id", id)
-            .maybeSingle(),
-          client
-            .from("seasons")
-            .select("id, name, ardab_factor")
-            .eq("is_active", true)
-            .maybeSingle(),
-          client
-            .from("warehouses")
-            .select("id, name, account_type_id")
-            .eq("is_active", true)
-            .order("name"),
-          client
-            .from("warehouse_sections")
-            .select("id, name, warehouse_id")
-            .eq("is_active", true)
-            .order("name"),
-          client
-            .from("products")
-            .select("id, name")
-            .eq("is_active", true)
-            .order("name"),
-          client
-            .from("stock_statuses")
-            .select("id, name, product_id")
-            .eq("is_active", true)
-            .order("name"),
-        ]);
-      if (supplierRes.error) throw supplierRes.error;
-      if (seasonRes.error) throw seasonRes.error;
-      if (warehousesRes.error) throw warehousesRes.error;
-      if (sectionsRes.error) throw sectionsRes.error;
-      if (productsRes.error) throw productsRes.error;
-      if (statusesRes.error) throw statusesRes.error;
-
-      const rawSupplier = supplierRes.data as
-        | (Omit<SupplierLite, "account_type_name"> & {
-            account_types?: { name: string } | null
-          })
-        | null;
-      supplier.value = rawSupplier
-        ? {
-            id: rawSupplier.id,
-            name: rawSupplier.name,
-            notes: rawSupplier.notes,
-            is_active: rawSupplier.is_active,
-            account_type_id: rawSupplier.account_type_id,
-            account_type_name: rawSupplier.account_types?.name || "—",
-          }
-        : null;
-      activeSeason.value = seasonRes.data;
-      warehouses.value = warehousesRes.data ?? [];
-      sections.value = sectionsRes.data ?? [];
-      products.value = productsRes.data ?? [];
-      stockStatuses.value = statusesRes.data ?? [];
-
-      if (!supplierRes.data || !seasonRes.data) {
-        due.value = null;
-        dueByProduct.value = [];
-        purchases.value = [];
-        transfers.value = [];
-        deliveries.value = [];
-        costPayments.value = [];
-        syncSelectedProduct();
-        return;
-      }
-
-      const seasonId = seasonRes.data.id;
-      const [dueRes, purchasesRes, transfersRes, deliveriesRes] =
-        await Promise.all([
-          client.rpc("supplier_due", {
-            p_supplier_id: id,
-            p_season_id: seasonId,
-          }),
-          client
-            .from("purchase_ledger")
-            .select("*")
-            .eq("supplier_id", id)
-            .eq("season_id", seasonId)
-            .order("purchase_date", { ascending: true })
-            .order("created_at", { ascending: true }),
-          client
-            .from("cash_transfers")
-            .select("*")
-            .eq("supplier_id", id)
-            .eq("season_id", seasonId)
-            .eq("is_cancelled", false)
-            .order("transfer_date", { ascending: true })
-            .order("created_at", { ascending: true }),
-          client
-            .from("warehouse_deliveries")
-            .select(
-              "*, warehouses(id, name), warehouse_sections(id, name, warehouse_id), stores(id, name), products(id, name), stock_statuses(id, name)",
-            )
-            .eq("supplier_id", id)
-            .eq("season_id", seasonId)
-            .eq("is_cancelled", false)
-            .order("delivery_date", { ascending: true })
-            .order("created_at", { ascending: true }),
-        ]);
-
-      if (dueRes.error) throw dueRes.error;
-      if (purchasesRes.error) throw purchasesRes.error;
-      if (transfersRes.error) throw transfersRes.error;
-      if (deliveriesRes.error) throw deliveriesRes.error;
-
-      dueByProduct.value = dueRes.data ?? [];
-      purchases.value = (purchasesRes.data ?? []) as SupplierPurchase[];
-      transfers.value = transfersRes.data ?? [];
-      deliveries.value = (deliveriesRes.data ?? []) as SupplierDelivery[];
-
-      const deliveryIds = deliveries.value.map((d) => d.id);
-      if (deliveryIds.length) {
-        const paymentsRes = await client
-          .from("delivery_cost_payments")
-          .select("*")
-          .in("delivery_id", deliveryIds)
-          .eq("is_cancelled", false)
-          .order("payment_date", { ascending: false })
-          .order("created_at", { ascending: false });
-        if (paymentsRes.error) throw paymentsRes.error;
-        costPayments.value = (paymentsRes.data ??
-          []) as DeliveryCostPaymentLite[];
-      } else {
-        costPayments.value = [];
-      }
-
-      syncSelectedProduct();
-      due.value =
-        dueByProduct.value.find((r) => r.product_id === selectedProductId.value)
-        ?? dueByProduct.value[0]
-        ?? null;
-    } catch (e: any) {
-      toast.add({
-        title: "تعذر تحميل كشف المورد",
-        description: e.message,
-        color: "error",
-      });
-    } finally {
-      loading.value = false;
+    const urlProduct = toValue(productId);
+    if (
+      bundle.supplier?.product_id
+      && urlProduct
+      && bundle.supplier.product_id !== urlProduct
+    ) {
+      void router.replace(
+        `/suppliers/${bundle.supplier.id}/${bundle.supplier.product_id}`,
+      );
     }
   };
 
+  const load = async () => {
+    const result = await detailQuery.refetch();
+    if (result.error) {
+      toast.add({
+        title: "تعذر تحميل كشف المورد",
+        description: (result.error as Error).message,
+        color: "error",
+      });
+    }
+  };
+
+  /** Invalidate detail + list balances after any mutation. */
+  const invalidateAfterMutation = async () => {
+    const id = toValue(supplierId);
+    const pid = toValue(productId) || selectedProductId.value;
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.supplierDetail(id, pid, detailQuery.seasonId.value),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.supplierBalances(detailQuery.seasonId.value),
+      }),
+    ]);
+  };
+
   watch(
-    () => toValue(supplierId),
-    () => {
-      selectedProductId.value = "";
-      void load();
+    () => detailQuery.data.value,
+    (bundle) => {
+      applyBundle(bundle);
     },
     { immediate: true },
   );
 
+  watch(
+    () => detailQuery.error.value,
+    async (err) => {
+      if (!err) return;
+      const mismatchId = (err as Error & { supplierProductId?: string })
+        .supplierProductId;
+      if (mismatchId) {
+        await router.replace(
+          `/suppliers/${toValue(supplierId)}/${mismatchId}`,
+        );
+        return;
+      }
+      toast.add({
+        title: "تعذر تحميل كشف المورد",
+        description: (err as Error).message,
+        color: "error",
+      });
+    },
+  );
+
   watch(selectedProductId, () => {
+    due.value =
+      dueByProduct.value.find((r) => r.product_id === selectedProductId.value)
+      ?? dueByProduct.value[0]
+      ?? null;
     onSelectedProductChange();
   });
 
   return {
     loading,
+    isRefreshing,
     saving,
     supplier,
     due,

@@ -78,6 +78,7 @@ export type Database = {
           notes: string | null
           is_active: boolean
           account_type_id: string
+          product_id: string
           created_at: string
           updated_at: string
         }
@@ -87,6 +88,7 @@ export type Database = {
           notes?: string | null
           is_active?: boolean
           account_type_id: string
+          product_id: string
           created_at?: string
           updated_at?: string
         }
@@ -96,6 +98,7 @@ export type Database = {
           notes?: string | null
           is_active?: boolean
           account_type_id?: string
+          product_id?: string
           created_at?: string
           updated_at?: string
         }
@@ -105,6 +108,13 @@ export type Database = {
             columns: ['account_type_id']
             isOneToOne: false
             referencedRelation: 'account_types'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'suppliers_product_id_fkey'
+            columns: ['product_id']
+            isOneToOne: false
+            referencedRelation: 'products'
             referencedColumns: ['id']
           }
         ]
@@ -208,6 +218,7 @@ export type Database = {
           name: string
           notes: string | null
           is_active: boolean
+          is_default: boolean
           created_at: string
           updated_at: string
         }
@@ -217,6 +228,7 @@ export type Database = {
           name: string
           notes?: string | null
           is_active?: boolean
+          is_default?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -226,6 +238,7 @@ export type Database = {
           name?: string
           notes?: string | null
           is_active?: boolean
+          is_default?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -373,12 +386,12 @@ export type Database = {
           }
         ]
       }
-      warehouse_expenses: {
+      season_costs: {
         Row: {
           id: string
-          warehouse_id: string
           season_id: string
-          payment_date: string
+          cost_date: string
+          title: string
           amount: number
           notes: string | null
           created_at: string
@@ -386,9 +399,9 @@ export type Database = {
         }
         Insert: {
           id?: string
-          warehouse_id: string
           season_id: string
-          payment_date?: string
+          cost_date?: string
+          title: string
           amount: number
           notes?: string | null
           created_at?: string
@@ -396,9 +409,9 @@ export type Database = {
         }
         Update: {
           id?: string
-          warehouse_id?: string
           season_id?: string
-          payment_date?: string
+          cost_date?: string
+          title?: string
           amount?: number
           notes?: string | null
           created_at?: string
@@ -406,14 +419,7 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: 'warehouse_expenses_warehouse_id_fkey'
-            columns: ['warehouse_id']
-            isOneToOne: false
-            referencedRelation: 'warehouses'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'warehouse_expenses_season_id_fkey'
+            foreignKeyName: 'season_costs_season_id_fkey'
             columns: ['season_id']
             isOneToOne: false
             referencedRelation: 'seasons'
@@ -546,6 +552,7 @@ export type Database = {
           season_id: string
           product_id: string
           status_id: string
+          to_status_id: string
           movement_date: string
           quantity_kg: number
           from_kind: StockLocationKind
@@ -562,6 +569,7 @@ export type Database = {
           season_id: string
           product_id: string
           status_id: string
+          to_status_id: string
           movement_date?: string
           quantity_kg: number
           from_kind: StockLocationKind
@@ -578,6 +586,7 @@ export type Database = {
           season_id?: string
           product_id?: string
           status_id?: string
+          to_status_id?: string
           movement_date?: string
           quantity_kg?: number
           from_kind?: StockLocationKind
@@ -607,6 +616,13 @@ export type Database = {
           {
             foreignKeyName: 'stock_movements_status_id_fkey'
             columns: ['status_id']
+            isOneToOne: false
+            referencedRelation: 'stock_statuses'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'stock_movements_to_status_id_fkey'
+            columns: ['to_status_id']
             isOneToOne: false
             referencedRelation: 'stock_statuses'
             referencedColumns: ['id']
@@ -818,6 +834,23 @@ export type Database = {
       }
     }
     Functions: {
+      dashboard_quantity_flow: {
+        Args: {
+          p_season_id: string
+          p_product_id: string
+          p_account_type_id?: string | null
+          p_supplier_id?: string | null
+        }
+        Returns: {
+          purchased_kg: number
+          delivered_kg: number
+          remaining_kg: number
+          warehouse_kg: number
+          store_kg: number
+          mekla_kg: number
+          sold_kg: number
+        }[]
+      }
       warehouse_balances: {
         Args: {
           p_season_id?: string | null
@@ -855,6 +888,21 @@ export type Database = {
           kg_out: number
           kg_remaining: number
         }[]
+      }
+      stock_location_label: {
+        Args: {
+          p_kind: Database['public']['Enums']['stock_location_kind']
+          p_id: string
+          p_context_warehouse_id?: string | null
+        }
+        Returns: string
+      }
+      warehouse_detail_bundle: {
+        Args: {
+          p_warehouse_id: string
+          p_season_id?: string | null
+        }
+        Returns: Json
       }
       store_balances: {
         Args: {
@@ -940,6 +988,22 @@ export type Database = {
           ardab_delivered: number
           ardab_remaining: number
         }[]
+      }
+      supplier_detail_bundle: {
+        Args: {
+          p_supplier_id: string
+          p_product_id: string
+          p_season_id?: string | null
+        }
+        Returns: Json
+      }
+      supplier_stats_bundle: {
+        Args: {
+          p_product_id: string
+          p_season_id?: string | null
+          p_account_type_id?: string | null
+        }
+        Returns: Json
       }
     }
     Enums: {

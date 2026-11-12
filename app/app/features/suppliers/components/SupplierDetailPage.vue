@@ -4,20 +4,20 @@ import { accountTypeLabel } from '~/utils/accountType'
 
 const props = defineProps<{
   supplierId: string
+  productId: string
 }>()
 
 const {
   loading,
+  isRefreshing,
   saving,
   supplier,
   activeSeason,
   filteredPurchases,
   filteredTransfers,
   filteredDeliveries,
-  selectedProductId,
   selectedProductName,
   selectedProductRemainingKg,
-  onSelectedProductChange,
   isPurchaseCreating,
   isTransferCreating,
   isDeliveryCreating,
@@ -48,7 +48,6 @@ const {
   warehouseOptions,
   storeOptions,
   deliveryDestinationOptions,
-  productOptions,
   sectionOptions,
   onDeliveryWarehouseChange,
   onDeliveryDestinationChange,
@@ -89,7 +88,10 @@ const {
   setPaymentDecimal,
   nolonManualOverride,
   nolonRatePerTon
-} = useSupplierDetail(() => props.supplierId)
+} = useSupplierDetail(
+  () => props.supplierId,
+  () => props.productId
+)
 
 const cellInputUi = { base: 'px-1.5 py-1.5 text-base rounded-sm tabular-nums text-end' }
 /** Shared body row height so empty pads match data rows */
@@ -124,6 +126,12 @@ const ledgerTotalTdClass =
   'border-t-2 border-e border-default bg-elevated p-2.5 text-base last:border-e-0'
 /** Compact padding for supplier header stats cards (override Card default p-4 sm:p-6) */
 const statsCardUi = { body: 'p-2 sm:p-2.5' }
+const signedTextClass = (n: number | null | undefined) => {
+  const tone = signedTone(n)
+  if (tone === 'error') return 'text-error'
+  if (tone === 'warning') return 'text-warning'
+  return 'text-success'
+}
 
 const onPurchaseKey = (e: KeyboardEvent) => {
   if (e.key === 'Enter') {
@@ -166,55 +174,24 @@ const onDeliveryKey = (e: KeyboardEvent) => {
           aria-label="رجوع"
         />
         <div class="min-w-0">
-          <div class="flex flex-wrap items-center gap-2">
-            <h2 class="truncate text-2xl font-semibold tracking-tight text-highlighted">
-              {{ supplier?.name || 'كشف المورد' }}
-            </h2>
-            <UBadge
-              v-if="supplier"
-              variant="subtle"
-              size="sm"
-              color="warning"
-            >
-              {{ accountTypeLabel(supplier.account_type_name) }}
-            </UBadge>
-          </div>
+          <h2 class="truncate text-2xl font-semibold tracking-tight text-highlighted">
+            <template v-if="supplier">
+              {{ supplier.name }}
+              - {{ accountTypeLabel(supplier.account_type_name) }}
+              <template v-if="selectedProductName && selectedProductName !== '—'">
+                - {{ selectedProductName }}
+              </template>
+            </template>
+            <template v-else>
+              كشف المورد
+            </template>
+          </h2>
           <p v-if="supplier?.notes" class="mt-1 truncate text-sm text-muted">
             {{ supplier.notes }}
           </p>
         </div>
       </div>
 
-      <div
-        v-if="supplier && activeSeason"
-        class="flex flex-wrap items-center gap-2"
-      >
-        <USelect
-          v-model="selectedProductId"
-          :items="productOptions"
-          value-key="value"
-          label-key="label"
-          class="w-48"
-          placeholder="اختر الصنف"
-          @update:model-value="onSelectedProductChange"
-        />
-        <p class="text-sm text-muted tabular-nums whitespace-nowrap" dir="ltr">
-          متبقي:
-          <span class="font-medium text-highlighted">{{ formatNumber(selectedProductRemainingKg) }}</span>
-          كجم
-        </p>
-      </div>
-
-      <UButton
-        v-if="supplier"
-        icon="i-lucide-pencil"
-        variant="outline"
-        color="neutral"
-        size="sm"
-        @click="openSupplierEdit"
-      >
-        تعديل
-      </UButton>
     </div>
 
     <div v-if="loading">
@@ -230,7 +207,23 @@ const onDeliveryKey = (e: KeyboardEvent) => {
     </template>
 
     <template v-else>
-      <div class="flex min-h-0 flex-1 flex-col gap-4">
+      <div
+        class="relative flex min-h-0 flex-1 flex-col gap-4 transition-opacity duration-200"
+        :class="isRefreshing ? 'opacity-50 pointer-events-none' : 'opacity-100'"
+        :aria-busy="isRefreshing"
+      >
+      <div
+        v-if="isRefreshing"
+        class="pointer-events-none absolute inset-x-0 top-10 z-10 flex justify-center"
+      >
+        <div class="flex items-center gap-2 rounded-full border border-default bg-default/90 px-3 py-1.5 text-sm text-muted shadow-sm backdrop-blur-sm">
+          <UIcon
+            name="i-lucide-loader-circle"
+            class="size-4 animate-spin text-primary"
+          />
+          تحديث البيانات…
+        </div>
+      </div>
       <div v-if="!activeSeason" class="shrink-0 rounded-lg bg-elevated/60 p-3 text-muted text-center text-sm">
         لا يوجد موسم نشط — فعّل موسماً من شاشة المواسم أولاً.
       </div>
@@ -244,16 +237,30 @@ const onDeliveryKey = (e: KeyboardEvent) => {
           <div class="flex flex-nowrap items-stretch gap-1.5 shrink-0">
             <UCard class="min-w-28" :ui="statsCardUi">
               <p class="text-xs font-medium text-muted">
-                كجم
+                مشترى
               </p>
               <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
                 {{ formatNumber(supplierDetailStats.kg) }}
               </p>
+            </UCard>
+            <UCard class="min-w-28" :ui="statsCardUi">
+              <p class="text-xs font-medium text-muted">
+                مستلم
+              </p>
+              <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
+                {{ formatNumber(deliveryTotals.kg) }}
+              </p>
+            </UCard>
+            <UCard class="min-w-28" :ui="statsCardUi">
+              <p class="text-xs font-medium text-muted">
+                متبقي
+              </p>
               <p
-                v-if="selectedProductName !== '—'"
-                class="mt-0.5 max-w-28 truncate text-[0.7rem] text-muted"
+                class="mt-0.5 text-base font-semibold tracking-tight"
+                :class="selectedProductRemainingKg < -0.001 ? 'text-error' : 'text-highlighted'"
+                dir="ltr"
               >
-                {{ selectedProductName }}
+                {{ formatNumber(selectedProductRemainingKg) }}
               </p>
             </UCard>
             <UCard class="min-w-28" :ui="statsCardUi">
@@ -316,31 +323,37 @@ const onDeliveryKey = (e: KeyboardEvent) => {
               <p class="text-xs font-medium text-muted">
                 مستحق المورد
               </p>
-              <div class="mt-0.5">
-                <UBadge size="md" :color="signedTone(supplierDetailStats.supplierDue)" variant="subtle">
-                  <span dir="ltr">{{ formatMoney(supplierDetailStats.supplierDue) }}</span>
-                </UBadge>
-              </div>
+              <p
+                class="mt-0.5 text-base font-semibold tracking-tight"
+                :class="signedTextClass(supplierDetailStats.supplierDue)"
+                dir="ltr"
+              >
+                {{ formatMoney(supplierDetailStats.supplierDue) }}
+              </p>
             </UCard>
             <UCard class="min-w-36" :ui="statsCardUi">
               <p class="text-xs font-medium text-muted">
                 مستحق نولون/نثريات
               </p>
-              <div class="mt-0.5">
-                <UBadge size="md" :color="signedTone(supplierDetailStats.deliveryCostsDue)" variant="subtle">
-                  <span dir="ltr">{{ formatMoney(supplierDetailStats.deliveryCostsDue) }}</span>
-                </UBadge>
-              </div>
+              <p
+                class="mt-0.5 text-base font-semibold tracking-tight"
+                :class="signedTextClass(supplierDetailStats.deliveryCostsDue)"
+                dir="ltr"
+              >
+                {{ formatMoney(supplierDetailStats.deliveryCostsDue) }}
+              </p>
             </UCard>
             <UCard class="min-w-36" :ui="statsCardUi">
               <p class="text-xs font-medium text-muted">
                 الإجمالي المستحق
               </p>
-              <div class="mt-0.5">
-                <UBadge size="md" :color="signedTone(supplierDetailStats.grandDue)" variant="subtle">
-                  <span dir="ltr">{{ formatMoney(supplierDetailStats.grandDue) }}</span>
-                </UBadge>
-              </div>
+              <p
+                class="mt-0.5 text-base font-semibold tracking-tight"
+                :class="signedTextClass(supplierDetailStats.grandDue)"
+                dir="ltr"
+              >
+                {{ formatMoney(supplierDetailStats.grandDue) }}
+              </p>
             </UCard>
           </div>
         </div>

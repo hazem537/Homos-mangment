@@ -4,6 +4,21 @@ export default defineAppConfig({
       primary: 'amber',
       neutral: 'stone'
     },
+    card: {
+      variants: {
+        variant: {
+          outline: {
+            root: 'bg-elevated ring ring-default divide-y divide-default'
+          },
+          soft: {
+            root: 'bg-elevated divide-y divide-default'
+          },
+          subtle: {
+            root: 'bg-elevated ring ring-default divide-y divide-default'
+          }
+        }
+      }
+    },
     formField: {
       slots: {
         label: 'block w-full text-right font-medium text-default',
@@ -19,6 +34,20 @@ export default defineAppConfig({
         value: 'flex-1 truncate text-right',
         placeholder: 'flex-1 truncate text-right text-dimmed',
         label: 'w-full text-right font-semibold text-highlighted',
+        item: 'w-full justify-end text-right',
+        itemWrapper: 'flex-1 flex flex-col min-w-0 items-end text-right',
+        itemLabel: 'w-full truncate text-right',
+        itemDescription: 'w-full truncate text-muted text-right'
+      }
+    },
+    selectMenu: {
+      slots: {
+        base: 'w-full justify-start text-right',
+        value: 'flex-1 truncate text-right',
+        placeholder: 'flex-1 truncate text-right text-dimmed',
+        trailing: 'ms-0 me-auto',
+        content: 'min-w-fit',
+        input: '[&_input]:text-right',
         item: 'w-full justify-end text-right',
         itemWrapper: 'flex-1 flex flex-col min-w-0 items-end text-right',
         itemLabel: 'w-full truncate text-right',

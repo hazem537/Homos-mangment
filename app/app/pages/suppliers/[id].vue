@@ -1,8 +1,7 @@
 <script setup lang="ts">
-const route = useRoute()
-const supplierId = computed(() => String(route.params.id || ''))
+/** Parent shell for /suppliers/:id and /suppliers/:id/:productId */
 </script>
 
 <template>
-  <SupplierDetailPage :supplier-id="supplierId" />
+  <NuxtPage />
 </template>

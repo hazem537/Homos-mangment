@@ -1,48 +1,119 @@
+import { useQueryClient } from '@tanstack/vue-query'
 import type { Database } from '~/types/database.types'
+import { queryKeys } from '~/composables/queries/queryKeys'
+import {
+  useMeklaBalancesQuery,
+  type MeklaListRow
+} from '~/composables/queries/useMeklaBalancesQuery'
 
-export type MeklaBalance =
-  Database['public']['Functions']['mekla_balances']['Returns'][number]
+export type { MeklaListRow }
+export type MeklaBalance = MeklaListRow
 
 export function useMeklas() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()
+  const queryClient = useQueryClient()
   const { confirm: askConfirm } = useConfirmDialog()
 
-  const loading = ref(true)
   const saving = ref(false)
-  const meklas = ref<MeklaBalance[]>([])
-  const activeSeasonName = ref<string | null>(null)
   const search = ref('')
+  const selectedProductId = ref('all')
+  const selectedAccountTypeId = ref('all')
   const modalOpen = ref(false)
-  const editing = ref<MeklaBalance | null>(null)
+  const editing = ref<MeklaListRow | null>(null)
   const form = reactive({ name: '', notes: '' })
 
+  const {
+    data: balancesData,
+    listRows,
+    error: balancesError,
+    isLoading,
+    isFetching,
+    isPlaceholderData,
+    refetch,
+    seasonQuery
+  } = useMeklaBalancesQuery()
+
+  const meklas = computed(() => listRows.value)
+  const activeSeasonName = computed(() => seasonQuery.data.value?.name ?? null)
+
+  const initialLoading = computed(() =>
+    seasonQuery.isPending.value
+    || (isLoading.value && !isPlaceholderData.value && !balancesData.value)
+  )
+
+  const isRefreshing = computed(() =>
+    !initialLoading.value && isFetching.value
+  )
+
+  watch(balancesError, (err) => {
+    if (!err) return
+    toast.add({
+      title: 'تعذر تحميل المقالي',
+      description: (err as Error).message,
+      color: 'error'
+    })
+  })
+
+  const productOptions = computed(() => {
+    const map = new Map<string, string>()
+    for (const m of meklas.value) {
+      if (m.product_id && m.product_name) map.set(m.product_id, m.product_name)
+    }
+    return [
+      { label: 'كل الأصناف', value: 'all' },
+      ...[...map.entries()]
+        .sort((a, b) => a[1].localeCompare(b[1], 'ar'))
+        .map(([value, label]) => ({ label, value }))
+    ]
+  })
+
+  /** Unused by UI (meklas have no account type); kept for SuppliersFilters v-model. */
+  const accountTypeOptions = computed(() => [
+    { label: 'كل الأنواع', value: 'all' }
+  ])
+
   const filtered = computed(() => {
+    let rows = meklas.value
+    if (selectedProductId.value && selectedProductId.value !== 'all') {
+      rows = rows.filter(m => m.product_id === selectedProductId.value)
+    }
     const q = search.value.trim()
-    if (!q) return meklas.value
-    return meklas.value.filter(m =>
+    if (!q) return rows
+    return rows.filter(m =>
       m.mekla_name.includes(q)
       || (m.product_name || '').includes(q)
-      || (m.status_name || '').includes(q)
       || (m.notes || '').includes(q)
     )
   })
 
-  const load = async () => {
-    loading.value = true
-    try {
-      const [seasonRes, balancesRes] = await Promise.all([
-        client.from('seasons').select('name').eq('is_active', true).maybeSingle(),
-        client.rpc('mekla_balances')
-      ])
-      if (balancesRes.error) throw balancesRes.error
-      activeSeasonName.value = seasonRes.data?.name ?? null
-      meklas.value = balancesRes.data ?? []
-    } catch (e: any) {
-      toast.add({ title: 'تعذر تحميل المقالي', description: e.message, color: 'error' })
-    } finally {
-      loading.value = false
+  const hasActiveFilters = computed(() =>
+    search.value.trim().length > 0
+    || selectedProductId.value !== 'all'
+  )
+
+  const emptyMessage = computed(() => {
+    if (!meklas.value.length) return 'لا توجد مقالي بعد'
+    if (hasActiveFilters.value && !filtered.value.length) {
+      return 'لا نتائج مطابقة للتصفية الحالية'
     }
+    return 'لا توجد مقالي بعد'
+  })
+
+  const resetFilters = () => {
+    search.value = ''
+    selectedProductId.value = 'all'
+    selectedAccountTypeId.value = 'all'
+  }
+
+  const invalidateMeklaQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.meklaBalances(seasonQuery.data.value?.id)
+      }),
+      queryClient.invalidateQueries({ queryKey: ['stock-location-detail'] }),
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] })
+    ])
   }
 
   const openCreate = () => {
@@ -52,7 +123,7 @@ export function useMeklas() {
     modalOpen.value = true
   }
 
-  const openEdit = (row: MeklaBalance) => {
+  const openEdit = (row: MeklaListRow) => {
     editing.value = row
     form.name = row.mekla_name
     form.notes = row.notes || ''
@@ -72,7 +143,10 @@ export function useMeklas() {
         is_active: true
       }
       if (editing.value) {
-        const { error } = await client.from('meklas').update(payload).eq('id', editing.value.mekla_id)
+        const { error } = await client
+          .from('meklas')
+          .update(payload)
+          .eq('id', editing.value.mekla_id)
         if (error) throw error
         toast.add({ title: 'تم تحديث المقلى', color: 'success' })
       } else {
@@ -81,7 +155,7 @@ export function useMeklas() {
         toast.add({ title: 'تمت إضافة المقلى', color: 'success' })
       }
       modalOpen.value = false
-      await load()
+      await invalidateMeklaQueries()
     } catch (e: any) {
       toast.add({ title: 'فشل الحفظ', description: e.message, color: 'error' })
     } finally {
@@ -89,7 +163,7 @@ export function useMeklas() {
     }
   }
 
-  const softDelete = async (row: MeklaBalance) => {
+  const softDelete = async (row: MeklaListRow) => {
     const kgTotal = meklas.value
       .filter(m => m.mekla_id === row.mekla_id)
       .reduce((sum, m) => sum + Number(m.kg_total), 0)
@@ -110,7 +184,7 @@ export function useMeklas() {
       const { error } = await client.from('meklas').delete().eq('id', row.mekla_id)
       if (error) throw error
       toast.add({ title: 'تم حذف المقلى', color: 'success' })
-      await load()
+      await invalidateMeklaQueries()
     } catch (e: any) {
       toast.add({ title: 'فشل الحذف', description: e.message, color: 'error' })
     } finally {
@@ -118,19 +192,29 @@ export function useMeklas() {
     }
   }
 
-  onMounted(load)
-
   return {
-    loading,
+    loading: initialLoading,
+    initialLoading,
+    isRefreshing,
     saving,
     search,
+    selectedProductId,
+    selectedAccountTypeId,
+    productOptions,
+    accountTypeOptions,
+    hasActiveFilters,
+    resetFilters,
+    emptyMessage,
     modalOpen,
+    editing,
     form,
     filtered,
+    meklas,
     activeSeasonName,
     openCreate,
     openEdit,
     save,
-    softDelete
+    softDelete,
+    refetch
   }
 }

@@ -38,7 +38,7 @@ const {
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
-        <TableSkeleton :cols="3" />
+        <TableSkeleton :cols="4" />
       </div>
       <div v-else class="overflow-x-auto">
         <table dir="rtl" class="w-full text-sm min-w-120 text-center">
@@ -46,6 +46,9 @@ const {
             <tr>
               <th class="p-3 font-medium">
                 الاسم
+              </th>
+              <th class="p-3 font-medium">
+                الحالة الافتراضية
               </th>
               <th class="p-3 font-medium">
                 ملاحظات
@@ -68,6 +71,20 @@ const {
                 >
                   {{ row.name }}
                 </NuxtLink>
+              </td>
+              <td class="p-3">
+                <UBadge
+                  v-if="row.default_status_name"
+                  size="sm"
+                  color="primary"
+                  variant="subtle"
+                >
+                  {{ row.default_status_name }}
+                </UBadge>
+                <span
+                  v-else
+                  class="text-muted"
+                >—</span>
               </td>
               <td class="max-w-[16rem] p-3 text-start text-muted whitespace-normal break-words">
                 {{ row.notes || '—' }}
@@ -98,7 +115,7 @@ const {
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="3" class="p-6 text-center text-muted">
+              <td colspan="4" class="p-6 text-center text-muted">
                 لا توجد أصناف
               </td>
             </tr>

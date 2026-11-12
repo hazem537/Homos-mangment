@@ -1,43 +1,25 @@
-import type { Database } from '~/types/database.types'
+import type { ActiveSeason } from '~/types/activeSeason'
+import { useActiveSeasonQuery } from '~/composables/queries/useLookupQueries'
 
-export type ActiveSeason = {
-  id: string
-  name: string
-  year: number
-  ardab_factor: number
-}
+export type { ActiveSeason }
 
-/** Shared active-season lookup for layout / header. */
+/** Shared active-season lookup for layout / header (backed by Vue Query cache). */
 export function useActiveSeason() {
-  const client = useSupabaseClient<Database>()
-  const season = useState<ActiveSeason | null>('active-season', () => null)
-  const loading = useState('active-season-loading', () => false)
-  const loaded = useState('active-season-loaded', () => false)
+  const query = useActiveSeasonQuery()
+
+  const season = computed(() => query.data.value ?? null)
+  const loading = computed(() => query.isPending.value)
 
   const load = async (force = false) => {
-    if (loaded.value && !force) return
-    loading.value = true
-    try {
-      const { data, error } = await client
-        .from('seasons')
-        .select('id, name, year, ardab_factor')
-        .eq('is_active', true)
-        .maybeSingle()
-      if (error) throw error
-      season.value = data
-      loaded.value = true
-    } catch {
-      season.value = null
-    } finally {
-      loading.value = false
+    if (force) {
+      await query.refetch()
+      return
     }
+    if (query.dataUpdatedAt.value) return
+    await query.refetch()
   }
 
   const refresh = () => load(true)
-
-  onMounted(() => {
-    void load()
-  })
 
   return { season, loading, load, refresh }
 }

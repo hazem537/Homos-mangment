@@ -1,20 +1,28 @@
+import { useQueryClient } from '@tanstack/vue-query'
 import type { Database } from '~/types/database.types'
+import { accountTypeLabel } from '~/utils/accountType'
+import { queryKeys } from '~/composables/queries/queryKeys'
+import {
+  useWarehouseBalancesQuery,
+  type WarehouseListRow
+} from '~/composables/queries/useWarehouseBalancesQuery'
 
-export type WarehouseBalance = Database['public']['Functions']['warehouse_balances']['Returns'][number]
+export type { WarehouseListRow }
+export type WarehouseBalance = WarehouseListRow
 
 export function useWarehouses() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()
+  const queryClient = useQueryClient()
   const { confirm: askConfirm } = useConfirmDialog()
   const { loadTypes, ensureDefaultTypeId } = useAccountTypes()
 
-  const loading = ref(true)
   const saving = ref(false)
-  const warehouses = ref<WarehouseBalance[]>([])
-  const activeSeasonName = ref<string | null>(null)
   const search = ref('')
+  const selectedProductId = ref('all')
+  const selectedAccountTypeId = ref('all')
   const modalOpen = ref(false)
-  const editing = ref<WarehouseBalance | null>(null)
+  const editing = ref<WarehouseListRow | null>(null)
 
   const form = reactive({
     name: '',
@@ -22,34 +30,115 @@ export function useWarehouses() {
     account_type_id: '' as string
   })
 
+  const {
+    data: balancesData,
+    listRows,
+    error: balancesError,
+    isLoading,
+    isFetching,
+    isPlaceholderData,
+    refetch,
+    seasonQuery
+  } = useWarehouseBalancesQuery()
+
+  const warehouses = computed(() => listRows.value)
+  const activeSeasonName = computed(() => seasonQuery.data.value?.name ?? null)
+
+  const initialLoading = computed(() =>
+    seasonQuery.isPending.value
+    || (isLoading.value && !isPlaceholderData.value && !balancesData.value)
+  )
+
+  const isRefreshing = computed(() =>
+    !initialLoading.value && isFetching.value
+  )
+
+  watch(balancesError, (err) => {
+    if (!err) return
+    toast.add({
+      title: 'تعذر تحميل الشون',
+      description: (err as Error).message,
+      color: 'error'
+    })
+  })
+
+  const productOptions = computed(() => {
+    const map = new Map<string, string>()
+    for (const w of warehouses.value) {
+      if (w.product_id && w.product_name) map.set(w.product_id, w.product_name)
+    }
+    return [
+      { label: 'كل الأصناف', value: 'all' },
+      ...[...map.entries()]
+        .sort((a, b) => a[1].localeCompare(b[1], 'ar'))
+        .map(([value, label]) => ({ label, value }))
+    ]
+  })
+
+  const accountTypeOptions = computed(() => {
+    const map = new Map<string, string>()
+    for (const w of warehouses.value) {
+      if (w.account_type_id && w.account_type_name) {
+        map.set(w.account_type_id, w.account_type_name)
+      }
+    }
+    return [
+      { label: 'كل الأنواع', value: 'all' },
+      ...[...map.entries()]
+        .sort((a, b) => a[1].localeCompare(b[1], 'ar'))
+        .map(([value, label]) => ({
+          label: accountTypeLabel(label),
+          value
+        }))
+    ]
+  })
+
   const filtered = computed(() => {
+    let rows = warehouses.value
+    if (selectedProductId.value && selectedProductId.value !== 'all') {
+      rows = rows.filter(w => w.product_id === selectedProductId.value)
+    }
+    if (selectedAccountTypeId.value && selectedAccountTypeId.value !== 'all') {
+      rows = rows.filter(w => w.account_type_id === selectedAccountTypeId.value)
+    }
     const q = search.value.trim()
-    if (!q) return warehouses.value
-    return warehouses.value.filter(w =>
+    if (!q) return rows
+    return rows.filter(w =>
       w.warehouse_name.includes(q)
       || (w.product_name || '').includes(q)
-      || (w.status_name || '').includes(q)
       || (w.account_type_name || '').includes(q)
       || (w.notes || '').includes(q)
     )
   })
 
-  const load = async () => {
-    loading.value = true
-    try {
-      const [seasonRes, balancesRes] = await Promise.all([
-        client.from('seasons').select('name').eq('is_active', true).maybeSingle(),
-        client.rpc('warehouse_balances'),
-        loadTypes()
-      ])
-      if (balancesRes.error) throw balancesRes.error
-      activeSeasonName.value = seasonRes.data?.name ?? null
-      warehouses.value = balancesRes.data ?? []
-    } catch (e: any) {
-      toast.add({ title: 'تعذر تحميل الشون', description: e.message, color: 'error' })
-    } finally {
-      loading.value = false
+  const hasActiveFilters = computed(() =>
+    search.value.trim().length > 0
+    || selectedProductId.value !== 'all'
+    || selectedAccountTypeId.value !== 'all'
+  )
+
+  const emptyMessage = computed(() => {
+    if (!warehouses.value.length) return 'لا توجد شون بعد'
+    if (hasActiveFilters.value && !filtered.value.length) {
+      return 'لا نتائج مطابقة للتصفية الحالية'
     }
+    return 'لا توجد شون بعد'
+  })
+
+  const resetFilters = () => {
+    search.value = ''
+    selectedProductId.value = 'all'
+    selectedAccountTypeId.value = 'all'
+  }
+
+  const invalidateWarehouseQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.warehouseBalances(seasonQuery.data.value?.id)
+      }),
+      queryClient.invalidateQueries({ queryKey: ['warehouse-detail'] }),
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] })
+    ])
   }
 
   const openCreate = async () => {
@@ -61,7 +150,7 @@ export function useWarehouses() {
     modalOpen.value = true
   }
 
-  const openEdit = (row: WarehouseBalance) => {
+  const openEdit = (row: WarehouseListRow) => {
     editing.value = row
     form.name = row.warehouse_name
     form.notes = row.notes || ''
@@ -87,7 +176,10 @@ export function useWarehouses() {
         is_active: true
       }
       if (editing.value) {
-        const { error } = await client.from('warehouses').update(payload).eq('id', editing.value.warehouse_id)
+        const { error } = await client
+          .from('warehouses')
+          .update(payload)
+          .eq('id', editing.value.warehouse_id)
         if (error) throw error
         toast.add({ title: 'تم تحديث الشونة', color: 'success' })
       } else {
@@ -96,7 +188,7 @@ export function useWarehouses() {
         toast.add({ title: 'تمت إضافة الشونة', color: 'success' })
       }
       modalOpen.value = false
-      await load()
+      await invalidateWarehouseQueries()
     } catch (e: any) {
       toast.add({ title: 'فشل الحفظ', description: e.message, color: 'error' })
     } finally {
@@ -104,7 +196,7 @@ export function useWarehouses() {
     }
   }
 
-  const softDelete = async (row: WarehouseBalance) => {
+  const softDelete = async (row: WarehouseListRow) => {
     const ok = await askConfirm(
       `حذف الشونة «${row.warehouse_name}» نهائياً؟\nسيتم حذف الأرباع والتسليمات المرتبطة.`
     )
@@ -124,7 +216,7 @@ export function useWarehouses() {
       const { error } = await client.from('warehouses').delete().eq('id', row.warehouse_id)
       if (error) throw error
       toast.add({ title: 'تم حذف الشونة', color: 'success' })
-      await load()
+      await invalidateWarehouseQueries()
     } catch (e: any) {
       toast.add({ title: 'فشل الحذف', description: e.message, color: 'error' })
     } finally {
@@ -132,19 +224,29 @@ export function useWarehouses() {
     }
   }
 
-  onMounted(load)
-
   return {
-    loading,
+    loading: initialLoading,
+    initialLoading,
+    isRefreshing,
     saving,
     search,
+    selectedProductId,
+    selectedAccountTypeId,
+    productOptions,
+    accountTypeOptions,
+    hasActiveFilters,
+    resetFilters,
+    emptyMessage,
     modalOpen,
+    editing,
     form,
     filtered,
+    warehouses,
     activeSeasonName,
     openCreate,
     openEdit,
     save,
-    softDelete
+    softDelete,
+    refetch
   }
 }

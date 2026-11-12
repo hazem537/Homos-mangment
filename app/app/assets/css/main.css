@@ -5,6 +5,17 @@
   --font-sans: "IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif;
 }
 
+/*
+ * Light-only surfaces: white page + soft stone cards.
+ * Scoped with :not(.dark) so dark mode keeps Nuxt UI defaults.
+ */
+html:not(.dark) {
+  --ui-bg: white;
+  --ui-bg-muted: var(--ui-color-neutral-50);
+  --ui-bg-elevated: var(--ui-color-neutral-100);
+  --ui-bg-accented: var(--ui-color-neutral-200);
+}
+
 /* Thin, rounded scrollbars for ledger / long panels */
 .homos-scroll {
   scrollbar-width: thin;

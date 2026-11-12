@@ -2,6 +2,10 @@ import type { Database } from '~/types/database.types'
 
 export type ProductRow = Database['public']['Tables']['products']['Row']
 
+export type ProductListRow = ProductRow & {
+  default_status_name: string | null
+}
+
 export function useProducts() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()
@@ -9,7 +13,7 @@ export function useProducts() {
 
   const loading = ref(true)
   const saving = ref(false)
-  const products = ref<ProductRow[]>([])
+  const products = ref<ProductListRow[]>([])
   const search = ref('')
   const modalOpen = ref(false)
   const editing = ref<ProductRow | null>(null)
@@ -19,7 +23,9 @@ export function useProducts() {
     const q = search.value.trim()
     if (!q) return products.value
     return products.value.filter(p =>
-      p.name.includes(q) || (p.notes || '').includes(q)
+      p.name.includes(q)
+      || (p.notes || '').includes(q)
+      || (p.default_status_name || '').includes(q)
     )
   })
 
@@ -32,11 +38,25 @@ export function useProducts() {
     try {
       const { data, error } = await client
         .from('products')
-        .select('*')
+        .select('*, stock_statuses(id, name, is_default, is_active)')
         .eq('is_active', true)
         .order('name')
       if (error) throw error
-      products.value = data ?? []
+      products.value = (data ?? []).map((row) => {
+        const { stock_statuses: statuses, ...product } = row as ProductRow & {
+          stock_statuses?: Array<{
+            id: string
+            name: string
+            is_default: boolean
+            is_active: boolean
+          }> | null
+        }
+        const defaultStatus = (statuses ?? []).find(s => s.is_active && s.is_default)
+        return {
+          ...product,
+          default_status_name: defaultStatus?.name ?? null
+        }
+      })
     } catch (e: any) {
       toast.add({ title: 'تعذر تحميل الأصناف', description: e.message, color: 'error' })
     } finally {
