@@ -18,8 +18,6 @@ export const queryKeys = {
     seasonId: string | null | undefined
   ) =>
     ['warehouse-detail', warehouseId, seasonId || 'active'] as const,
-  seasonCosts: (seasonId: string | null | undefined) =>
-    ['season-costs', seasonId || 'active'] as const,
   storeBalances: (seasonId: string | null | undefined) =>
     ['store-balances', seasonId || 'active'] as const,
   meklaBalances: (seasonId: string | null | undefined) =>

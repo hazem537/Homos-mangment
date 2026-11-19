@@ -1,10 +1,11 @@
 import { useQueryClient } from '@tanstack/vue-query'
-import type { Database } from '~/types/database.types'
+import type { Database, StockLocationKind } from '~/types/database.types'
 import { queryKeys } from '~/composables/queries/queryKeys'
 import { useStockLocationDetailQuery } from '~/composables/queries/useStockLocationDetailQuery'
 import {
   type LocationMovementLite,
-  type StockLocationDetailKind
+  type StockLocationDetailKind,
+  type StoreSlotLite
 } from '~/features/stores/utils/stockLocationDetailBundle'
 import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 
@@ -76,6 +77,7 @@ export function useStockLocationDetail(
   const route = useRoute()
   const router = useRouter()
   const queryClient = useQueryClient()
+  const { confirm: askConfirm } = useConfirmDialog()
   const detailQuery = useStockLocationDetailQuery(kind, locationId)
 
   const saving = ref(false)
@@ -84,17 +86,42 @@ export function useStockLocationDetail(
   type TransferUiKind = 'sale' | 'mekla' | 'store'
 
   const transferOpen = ref(false)
+  const editingMovementId = ref<string | null>(null)
+  const editingMovementQty = ref(0)
+  const editingMovementSnapshot = ref<{
+    to_kind: StockLocationKind
+    to_id: string
+    product_id: string
+    to_status_id: string
+    quantity_kg: number
+  } | null>(null)
   const meklas = ref<{ id: string, name: string }[]>([])
   const stores = ref<{ id: string, name: string }[]>([])
   const transferForm = reactive({
+    from_slot_id: '' as string,
     to_kind: 'sale' as TransferUiKind,
     to_id: '' as string,
+    to_slot_id: '' as string,
     status_id: '' as string,
     to_status_id: '' as string,
     quantity_kg: '' as string,
-    movement_date: todayIsoDate(),
-    notes: ''
+    movement_date: todayIsoDate()
   })
+
+  const destStoreSlots = ref<StoreSlotLite[]>([])
+  const selectedSlotId = ref('all')
+  const slotModalOpen = ref(false)
+  const editingSlot = ref<StoreSlotLite | null>(null)
+  const slotForm = reactive({
+    name: '',
+    color: '#64748B'
+  })
+
+  const normalizeSlotColor = (raw: string | null | undefined) => {
+    const value = String(raw || '').trim()
+    if (/^#[0-9A-Fa-f]{6}$/.test(value)) return value.toUpperCase()
+    return null
+  }
 
   /** Store: sale | mekla. Mekla: sale | store. */
   const transferKindOptions = computed(() =>
@@ -142,6 +169,17 @@ export function useStockLocationDetail(
   const selectedProductId = ref(queryProductId() || '')
 
   const entity = computed(() => detailQuery.data.value?.entity ?? null)
+  const slots = computed(() => detailQuery.data.value?.slots ?? [])
+  const slotOptions = computed(() => [
+    { label: 'كل الخانات', value: 'all' },
+    ...slots.value.map(s => ({ label: s.name, value: s.id }))
+  ])
+  const transferFromSlotOptions = computed(() =>
+    slots.value.map(s => ({ label: s.name, value: s.id }))
+  )
+  const transferToSlotOptions = computed(() =>
+    destStoreSlots.value.map(s => ({ label: s.name, value: s.id }))
+  )
   const activeSeasonName = computed(
     () => detailQuery.data.value?.season?.name
       ?? detailQuery.seasonQuery.data.value?.name
@@ -315,27 +353,58 @@ export function useStockLocationDetail(
     meklas.value = []
   }
 
-  const onTransferKindChange = (next: TransferUiKind) => {
+  const loadDestStoreSlots = async (storeId: string) => {
+    destStoreSlots.value = []
+    transferForm.to_slot_id = ''
+    if (!storeId) return
+    const { data, error } = await client
+      .from('store_slots')
+      .select('id, name, color, store_id')
+      .eq('store_id', storeId)
+      .eq('is_active', true)
+      .order('name')
+    if (error) throw error
+    destStoreSlots.value = (data ?? []) as StoreSlotLite[]
+    transferForm.to_slot_id = destStoreSlots.value[0]?.id || ''
+  }
+
+  const onTransferKindChange = async (next: TransferUiKind) => {
     transferForm.to_kind = next
+    transferForm.to_slot_id = ''
+    destStoreSlots.value = []
     if (next === 'mekla') {
       transferForm.to_id = meklas.value[0]?.id || ''
     } else if (next === 'store') {
       transferForm.to_id = stores.value[0]?.id || ''
+      if (transferForm.to_id) await loadDestStoreSlots(transferForm.to_id)
     } else {
       transferForm.to_id = ''
     }
   }
 
+  const onTransferStoreChange = async (storeId: string) => {
+    transferForm.to_id = storeId
+    await loadDestStoreSlots(storeId)
+  }
+
   const filteredIncomingBase = computed(() => {
+    let rows = allIncoming.value
     const pid = selectedProductId.value
-    if (!pid) return allIncoming.value
-    return allIncoming.value.filter(r => r.product_id === pid)
+    if (pid) rows = rows.filter(r => r.product_id === pid)
+    if (kind === 'store' && selectedSlotId.value !== 'all') {
+      rows = rows.filter(r => r.slot_id === selectedSlotId.value)
+    }
+    return rows
   })
 
   const filteredOutgoingBase = computed(() => {
+    let rows = allOutgoing.value
     const pid = selectedProductId.value
-    if (!pid) return allOutgoing.value
-    return allOutgoing.value.filter(r => r.product_id === pid)
+    if (pid) rows = rows.filter(r => r.product_id === pid)
+    if (kind === 'store' && selectedSlotId.value !== 'all') {
+      rows = rows.filter(r => r.slot_id === selectedSlotId.value)
+    }
+    return rows
   })
 
   const ledger = computed(() => {
@@ -370,6 +439,11 @@ export function useStockLocationDetail(
   )
 
   const transferAvailableKg = ref(0)
+  const transferAvailableForForm = computed(
+    () =>
+      transferAvailableKg.value
+      + (editingMovementId.value ? editingMovementQty.value : 0)
+  )
 
   const refreshTransferAvailable = async () => {
     transferAvailableKg.value = 0
@@ -382,9 +456,12 @@ export function useStockLocationDetail(
     ) {
       return
     }
+    const fromKind = kind === 'store' ? 'store_slot' as const : kind
+    const fromId = kind === 'store' ? transferForm.from_slot_id : id
+    if (!fromId) return
     const { data, error } = await client.rpc('location_remaining_kg', {
-      p_kind: kind,
-      p_id: id,
+      p_kind: fromKind,
+      p_id: fromId,
       p_product_id: selectedProductId.value,
       p_status_id: transferForm.status_id,
       p_season_id: activeSeasonId.value
@@ -397,11 +474,43 @@ export function useStockLocationDetail(
   }
 
   watch(
-    () => [transferOpen.value, transferForm.status_id, selectedProductId.value] as const,
+    () => [
+      transferOpen.value,
+      transferForm.status_id,
+      transferForm.from_slot_id,
+      selectedProductId.value
+    ] as const,
     async ([open]) => {
       if (open) await refreshTransferAvailable()
     }
   )
+
+  const assertDestinationAllowsRemoval = async (opts: {
+    to_kind: StockLocationKind
+    to_id: string
+    product_id: string
+    to_status_id: string
+    season_id: string
+    remove_kg: number
+  }) => {
+    if (!(opts.remove_kg > 0.001)) return
+    if (opts.to_kind === 'sale') return
+    const { data, error } = await client.rpc('location_remaining_kg', {
+      p_kind: opts.to_kind,
+      p_id: opts.to_id,
+      p_product_id: opts.product_id,
+      p_status_id: opts.to_status_id,
+      p_season_id: opts.season_id
+    })
+    if (error) throw error
+    const remaining = Number(data ?? 0)
+    const after = remaining - opts.remove_kg
+    if (after < -0.001) {
+      throw new Error(
+        `رصيد الوجهة سيصبح سالباً (${after.toFixed(2)} كجم). انقل أو احذف الحركات اللاحقة أولاً`
+      )
+    }
+  }
 
   const openTransfer = async () => {
     if (!activeSeasonId.value) {
@@ -440,22 +549,183 @@ export function useStockLocationDetail(
       })
       return
     }
+    editingMovementId.value = null
+    editingMovementQty.value = 0
+    editingMovementSnapshot.value = null
     transferForm.to_kind = 'sale'
     transferForm.to_id = ''
+    transferForm.to_slot_id = ''
+    destStoreSlots.value = []
+    transferForm.from_slot_id
+      = (selectedSlotId.value !== 'all' ? selectedSlotId.value : '')
+      || slots.value[0]?.id
+      || ''
     transferForm.status_id = stockStatuses.value[0]?.id || ''
     transferForm.to_status_id = transferForm.status_id
     transferForm.quantity_kg = ''
     transferForm.movement_date = todayIsoDate()
-    transferForm.notes = ''
     transferOpen.value = true
     await refreshTransferAvailable()
   }
 
+  const openEditMovement = async (row: LocationMovementLite) => {
+    if (!activeSeasonId.value) {
+      toast.add({ title: 'لا يوجد موسم نشط', color: 'warning' })
+      return
+    }
+    if (row.source === 'delivery') {
+      toast.add({
+        title: 'لا يمكن التعديل من هنا',
+        description: 'التسليمات تُدار من صفحة المورد',
+        color: 'warning'
+      })
+      return
+    }
+    const expectedFrom = kind === 'store' ? 'store_slot' : 'mekla'
+    if (row.from_kind !== expectedFrom) {
+      toast.add({
+        title: 'لا يمكن التعديل من هنا',
+        description: kind === 'store'
+          ? 'يمكن تعديل التحويلات الصادرة من خانة فقط'
+          : 'يمكن تعديل التحويلات الصادرة من المقلى فقط',
+        color: 'warning'
+      })
+      return
+    }
+    if (
+      row.to_kind !== 'sale'
+      && row.to_kind !== 'mekla'
+      && row.to_kind !== 'store_slot'
+    ) {
+      toast.add({ title: 'نوع الوجهة غير مدعوم للتعديل', color: 'warning' })
+      return
+    }
+    if (!row.product_id) {
+      toast.add({ title: 'بيانات الحركة غير مكتملة', color: 'warning' })
+      return
+    }
+
+    selectedProductId.value = row.product_id
+    try {
+      await loadStatusesForProduct(row.product_id)
+      await loadTransferDestinations()
+    } catch (e: any) {
+      toast.add({ title: 'تعذر تحميل الوجهات', description: e.message, color: 'error' })
+      return
+    }
+
+    editingMovementId.value = row.id
+    editingMovementQty.value = Number(row.quantity_kg)
+    editingMovementSnapshot.value = {
+      to_kind: row.to_kind,
+      to_id: row.to_id || '',
+      product_id: row.product_id,
+      to_status_id: row.to_status_id || row.status_id || '',
+      quantity_kg: Number(row.quantity_kg)
+    }
+
+    const uiKind: TransferUiKind
+      = row.to_kind === 'store_slot'
+        ? 'store'
+        : row.to_kind === 'mekla'
+          ? 'mekla'
+          : 'sale'
+    transferForm.to_kind = uiKind
+    transferForm.from_slot_id = kind === 'store' ? (row.from_id || '') : ''
+    transferForm.status_id = row.status_id || stockStatuses.value[0]?.id || ''
+    transferForm.to_status_id
+      = row.to_status_id || transferForm.status_id || stockStatuses.value[0]?.id || ''
+    transferForm.quantity_kg = String(row.quantity_kg)
+    transferForm.movement_date = row.date
+    transferForm.to_id = ''
+    transferForm.to_slot_id = ''
+    destStoreSlots.value = []
+
+    if (uiKind === 'store' && row.to_id) {
+      const { data: slot } = await client
+        .from('store_slots')
+        .select('id, store_id')
+        .eq('id', row.to_id)
+        .maybeSingle()
+      transferForm.to_id = slot?.store_id || ''
+      if (transferForm.to_id) await loadDestStoreSlots(transferForm.to_id)
+      transferForm.to_slot_id = slot?.id || row.to_id
+    } else if (uiKind === 'mekla') {
+      transferForm.to_id = row.to_id || ''
+    } else {
+      transferForm.to_id = ''
+    }
+
+    transferOpen.value = true
+    await refreshTransferAvailable()
+  }
+
+  const deleteMovement = async (row: LocationMovementLite) => {
+    if (row.source === 'delivery') {
+      toast.add({
+        title: 'لا يمكن الحذف من هنا',
+        description: 'التسليمات تُدار من صفحة المورد',
+        color: 'warning'
+      })
+      return
+    }
+    const ok = await askConfirm('حذف التحويل نهائياً؟')
+    if (!ok) return
+    saving.value = true
+    try {
+      if (
+        activeSeasonId.value
+        && row.to_kind
+        && row.to_id
+        && row.product_id
+        && (row.to_status_id || row.status_id)
+      ) {
+        await assertDestinationAllowsRemoval({
+          to_kind: row.to_kind,
+          to_id: row.to_id,
+          product_id: row.product_id,
+          to_status_id: row.to_status_id || row.status_id || '',
+          season_id: activeSeasonId.value,
+          remove_kg: Number(row.quantity_kg || 0)
+        })
+      }
+      const { error } = await client.from('stock_movements').delete().eq('id', row.id)
+      if (error) throw error
+      toast.add({ title: 'تم حذف التحويل', color: 'success' })
+      if (editingMovementId.value === row.id) cancelTransfer()
+      const invalidateTarget
+        = row.to_kind === 'mekla' && row.to_id
+          ? { toKind: 'mekla' as const, toId: row.to_id }
+          : row.to_kind === 'store_slot' && row.to_id
+            ? await (async () => {
+                const { data: slot } = await client
+                  .from('store_slots')
+                  .select('store_id')
+                  .eq('id', row.to_id!)
+                  .maybeSingle()
+                return slot?.store_id
+                  ? { toKind: 'store' as const, toId: slot.store_id }
+                  : undefined
+              })()
+            : undefined
+      await invalidateAfterMutation(invalidateTarget)
+    } catch (e: any) {
+      toast.add({ title: 'فشل الحذف', description: e.message, color: 'error' })
+    } finally {
+      saving.value = false
+    }
+  }
+
   const cancelTransfer = () => {
     transferOpen.value = false
+    editingMovementId.value = null
+    editingMovementQty.value = 0
+    editingMovementSnapshot.value = null
     transferForm.quantity_kg = ''
-    transferForm.notes = ''
     transferForm.to_id = ''
+    transferForm.to_slot_id = ''
+    transferForm.from_slot_id = ''
+    destStoreSlots.value = []
   }
 
   const saveTransfer = async () => {
@@ -475,12 +745,21 @@ export function useStockLocationDetail(
     }
     const toMekla = kind === 'store' && transferForm.to_kind === 'mekla'
     const toStore = kind === 'mekla' && transferForm.to_kind === 'store'
+    const toSale = transferForm.to_kind === 'sale'
+    if (kind === 'store' && !transferForm.from_slot_id) {
+      toast.add({ title: 'اختر الخانة المصدر', color: 'warning' })
+      return
+    }
     if (toMekla && !transferForm.to_id) {
       toast.add({ title: 'اختر المقلى', color: 'warning' })
       return
     }
     if (toStore && !transferForm.to_id) {
       toast.add({ title: 'اختر المخزن', color: 'warning' })
+      return
+    }
+    if (toStore && !transferForm.to_slot_id) {
+      toast.add({ title: 'اختر خانة المخزن', color: 'warning' })
       return
     }
     const qty = parseDecimal(transferForm.quantity_kg)
@@ -490,30 +769,85 @@ export function useStockLocationDetail(
     }
 
     await refreshTransferAvailable()
-    if (qty > transferAvailableKg.value + 0.001) {
+    const available
+      = transferAvailableKg.value
+      + (editingMovementId.value ? editingMovementQty.value : 0)
+    if (qty > available + 0.001) {
       toast.add({
         title: 'الرصيد غير كافٍ',
-        description: `المتاح: ${transferAvailableKg.value.toFixed(2)} كجم`,
+        description: `المتاح: ${available.toFixed(2)} كجم`,
         color: 'warning'
       })
       return
     }
 
+    const fromKind = kind === 'store' ? 'store_slot' as const : kind
+    const fromId = kind === 'store' ? transferForm.from_slot_id : id
+    const toKind = toMekla
+      ? 'mekla' as const
+      : toStore
+        ? 'store_slot' as const
+        : 'sale' as const
+    const toId = toMekla
+      ? transferForm.to_id
+      : toStore
+        ? transferForm.to_slot_id
+        : id
+
+    if (editingMovementId.value) {
+      saving.value = true
+      try {
+        const snap = editingMovementSnapshot.value
+        if (snap && activeSeasonId.value) {
+          const sameDest
+            = snap.to_kind === toKind
+            && snap.to_id === toId
+            && snap.product_id === selectedProductId.value
+            && snap.to_status_id === transferForm.to_status_id
+          const removeKg = sameDest
+            ? Math.max(0, snap.quantity_kg - qty)
+            : snap.quantity_kg
+          await assertDestinationAllowsRemoval({
+            to_kind: snap.to_kind,
+            to_id: snap.to_id,
+            product_id: snap.product_id,
+            to_status_id: snap.to_status_id,
+            season_id: activeSeasonId.value,
+            remove_kg: removeKg
+          })
+        }
+        const { error } = await client
+          .from('stock_movements')
+          .update({
+            status_id: transferForm.status_id,
+            to_status_id: transferForm.to_status_id,
+            movement_date: transferForm.movement_date,
+            quantity_kg: qty,
+            from_kind: fromKind,
+            from_id: fromId,
+            to_kind: toKind,
+            to_id: toId
+          })
+          .eq('id', editingMovementId.value)
+        if (error) throw error
+        toast.add({ title: 'تم تحديث التحويل', color: 'success' })
+        const invalidateTarget = toMekla
+          ? { toKind: 'mekla' as const, toId: transferForm.to_id }
+          : toStore
+            ? { toKind: 'store' as const, toId: transferForm.to_id }
+            : undefined
+        cancelTransfer()
+        await invalidateAfterMutation(invalidateTarget)
+      } catch (e: any) {
+        toast.add({ title: 'فشل التحديث', description: e.message, color: 'error' })
+      } finally {
+        saving.value = false
+      }
+      return
+    }
+
     saving.value = true
     try {
-      const toKind = toMekla
-        ? 'mekla' as const
-        : toStore
-          ? 'store' as const
-          : 'sale' as const
-      const toId = (toMekla || toStore) ? transferForm.to_id : id
-      const notes
-        = transferForm.notes.trim()
-        || (toMekla
-          ? 'تحويل إلى مقلى'
-          : toStore
-            ? 'تحويل إلى مخزن'
-            : 'بيع')
       const { error } = await client.from('stock_movements').insert({
         season_id: activeSeasonId.value,
         product_id: selectedProductId.value,
@@ -521,11 +855,10 @@ export function useStockLocationDetail(
         to_status_id: transferForm.to_status_id,
         movement_date: transferForm.movement_date,
         quantity_kg: qty,
-        from_kind: kind,
-        from_id: id,
+        from_kind: fromKind,
+        from_id: fromId,
         to_kind: toKind,
-        to_id: toId,
-        notes
+        to_id: toId
       })
       if (error) throw error
       toast.add({
@@ -533,19 +866,97 @@ export function useStockLocationDetail(
           ? 'تم التحويل إلى المقلى'
           : toStore
             ? 'تم التحويل إلى المخزن'
-            : 'تم تسجيل البيع',
+            : toSale
+              ? 'تم تسجيل البيع'
+              : 'تم التحويل',
         color: 'success'
       })
+      const invalidateTarget = toMekla
+        ? { toKind: 'mekla' as const, toId: transferForm.to_id }
+        : toStore
+          ? { toKind: 'store' as const, toId: transferForm.to_id }
+          : undefined
       cancelTransfer()
-      await invalidateAfterMutation(
-        toMekla
-          ? { toKind: 'mekla', toId }
-          : toStore
-            ? { toKind: 'store', toId }
-            : undefined
-      )
+      await invalidateAfterMutation(invalidateTarget)
     } catch (e: any) {
       toast.add({ title: 'فشل التحويل', description: e.message, color: 'error' })
+    } finally {
+      saving.value = false
+    }
+  }
+
+  const openSlotCreate = () => {
+    editingSlot.value = null
+    slotForm.name = ''
+    slotForm.color = '#64748B'
+    slotModalOpen.value = true
+  }
+
+  const openSlotEdit = (slot: StoreSlotLite) => {
+    editingSlot.value = slot
+    slotForm.name = slot.name
+    slotForm.color = normalizeSlotColor(slot.color) || '#64748B'
+    slotModalOpen.value = true
+  }
+
+  const saveSlot = async () => {
+    if (kind !== 'store') return
+    const storeId = toValue(locationId)
+    const name = slotForm.name.trim()
+    if (!storeId || !name) {
+      toast.add({ title: 'اسم الخانة مطلوب', color: 'warning' })
+      return
+    }
+    saving.value = true
+    try {
+      const payload = {
+        store_id: storeId,
+        name,
+        color: normalizeSlotColor(slotForm.color),
+        is_active: true
+      }
+      if (editingSlot.value) {
+        const { error } = await client
+          .from('store_slots')
+          .update({ name: payload.name, color: payload.color })
+          .eq('id', editingSlot.value.id)
+        if (error) throw error
+        toast.add({ title: 'تم تحديث الخانة', color: 'success' })
+      } else {
+        const { error } = await client.from('store_slots').insert(payload)
+        if (error) throw error
+        toast.add({ title: 'تمت إضافة الخانة', color: 'success' })
+      }
+      slotModalOpen.value = false
+      await invalidateAfterMutation()
+    } catch (e: any) {
+      toast.add({ title: 'فشل حفظ الخانة', description: e.message, color: 'error' })
+    } finally {
+      saving.value = false
+    }
+  }
+
+  const softDeleteSlot = async (slot: StoreSlotLite) => {
+    if (kind !== 'store') return
+    if (slots.value.length <= 1) {
+      toast.add({ title: 'لا يمكن حذف آخر خانة', color: 'warning' })
+      return
+    }
+    saving.value = true
+    try {
+      const { error } = await client.from('store_slots').delete().eq('id', slot.id)
+      if (error) throw error
+      if (selectedSlotId.value === slot.id) selectedSlotId.value = 'all'
+      toast.add({ title: 'تم حذف الخانة', color: 'success' })
+      await invalidateAfterMutation()
+    } catch (e: any) {
+      toast.add({
+        title: 'فشل حذف الخانة',
+        description: e.message.includes('restrict') || e.message.includes('foreign')
+          ? 'الخانة مرتبطة بحركات أو تسليمات'
+          : e.message,
+        color: 'error'
+      })
     } finally {
       saving.value = false
     }
@@ -556,10 +967,20 @@ export function useStockLocationDetail(
     isRefreshing,
     saving,
     entity,
+    slots,
+    selectedSlotId,
+    slotOptions,
+    transferFromSlotOptions,
+    transferToSlotOptions,
+    slotModalOpen,
+    editingSlot,
+    slotForm,
     activeSeasonName,
     selectedProductId,
     productOptions,
     ledger,
+    allIncoming,
+    allOutgoing,
     stats,
     listPath,
     entityLabel,
@@ -571,10 +992,19 @@ export function useStockLocationDetail(
     needsTransferDestination,
     transferStatusOptions,
     transferAvailableKg,
+    transferAvailableForForm,
     openTransfer,
+    openEditMovement,
+    deleteMovement,
+    editingMovementId,
     onTransferKindChange,
+    onTransferStoreChange,
     cancelTransfer,
     saveTransfer,
+    openSlotCreate,
+    openSlotEdit,
+    saveSlot,
+    softDeleteSlot,
     setTransferQty: (raw: string) => {
       transferForm.quantity_kg = normalizeDecimalInput(raw)
     },

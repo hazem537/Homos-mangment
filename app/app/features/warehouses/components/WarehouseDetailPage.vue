@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { formatNumber } from '~/utils/formatNumber'
 import { accountTypeLabel } from '~/utils/accountType'
+import { applySectionRunningBalances } from '../utils/warehouseDetailBundle'
 
 const props = defineProps<{
   warehouseId: string
@@ -25,6 +26,7 @@ const {
   transferFromSection,
   transferForm,
   transferToOptions,
+  transferStoreSlotOptions,
   destWarehouseOptions,
   transferAvailableKg,
   transferAllocation,
@@ -33,13 +35,19 @@ const {
   openEditSection,
   saveSection,
   softDeleteSection,
-  openTransfer,
+  expenseModalOpen,
+  editingExpense,
+  expenseForm,
+  openCreateExpense,
+  saveExpense,
+  setExpenseAmount,
   openWarehouseTransfer,
   openEditMovement,
   deleteMovement,
   cancelTransfer,
   onTransferKindChange,
   onTransferWarehouseChange,
+  onTransferStoreChange,
   saveTransfer,
   saveWasteAllRemaining,
   setTransferQty,
@@ -53,75 +61,6 @@ const transferKindOptions = [
   { label: 'شونة', value: 'warehouse' }
 ]
 
-const statsCardUi = { body: 'p-2 sm:p-2.5' }
-
-const tableClass = 'w-max min-w-full border-collapse text-sm text-center whitespace-nowrap tabular-nums'
-const tablePanelClass = 'flex w-max min-w-full flex-col rounded-lg border border-default'
-const sectionStatsClass = 'flex flex-nowrap items-center gap-1.5 tabular-nums text-sm'
-const cellNowrapClass = 'p-2 whitespace-nowrap'
-
-/** Resizable 2-col split: total warehouse % (RTL-right), rest for sections. */
-const STORAGE_KEY = 'warehouse-detail-split-pct-v2'
-const totalColPct = ref(100)
-const splitRoot = ref<HTMLElement | null>(null)
-const isResizing = ref(false)
-
-onMounted(() => {
-  try {
-    const saved = Number(localStorage.getItem(STORAGE_KEY))
-    if (Number.isFinite(saved) && saved >= 20 && saved <= 100) {
-      totalColPct.value = saved
-    }
-  } catch {
-    /* ignore */
-  }
-})
-
-const clampPct = (n: number) => Math.min(100, Math.max(20, n))
-
-const applySplitFromClientX = (clientX: number) => {
-  if (!splitRoot.value) return
-  const rect = splitRoot.value.getBoundingClientRect()
-  if (rect.width <= 0) return
-  // RTL: total column sits on the right — measure from right edge
-  const fromRight = ((rect.right - clientX) / rect.width) * 100
-  totalColPct.value = clampPct(fromRight)
-}
-
-const endSplitResize = () => {
-  if (!isResizing.value) return
-  isResizing.value = false
-  window.removeEventListener('pointermove', onWindowSplitMove)
-  window.removeEventListener('pointerup', endSplitResize)
-  window.removeEventListener('pointercancel', endSplitResize)
-  try {
-    localStorage.setItem(STORAGE_KEY, String(totalColPct.value))
-  } catch {
-    /* ignore */
-  }
-}
-
-const onWindowSplitMove = (e: PointerEvent) => {
-  if (!isResizing.value) return
-  applySplitFromClientX(e.clientX)
-}
-
-const onSplitPointerDown = (e: PointerEvent) => {
-  e.preventDefault()
-  isResizing.value = true
-  applySplitFromClientX(e.clientX)
-  window.addEventListener('pointermove', onWindowSplitMove)
-  window.addEventListener('pointerup', endSplitResize)
-  window.addEventListener('pointercancel', endSplitResize)
-}
-
-onBeforeUnmount(() => {
-  endSplitResize()
-})
-
-const sectionRowKey = (card: { section_id: string, product_id?: string | null, status_id?: string | null }) =>
-  `${card.section_id}:${card.product_id || 'none'}:${card.status_id || 'none'}`
-
 type MovementDir = 'in' | 'out'
 
 type SectionMovementRow = {
@@ -134,13 +73,22 @@ type SectionMovementRow = {
   quantity_kg: number
   qty_before: number
   qty_after: number
-  notes: string | null
   raw: any
 }
 
 type WarehouseMovementRow = SectionMovementRow & {
   section_name: string
   product_name: string | null
+}
+
+type GroupedWorkbookSection = {
+  section_id: string
+  section_name: string
+  card: (typeof filteredSectionCards.value)[number]
+  movements: SectionMovementRow[]
+  kg_in: number
+  kg_out: number
+  kg_remaining: number
 }
 
 const sortByDate = <T extends { date: string, created_at: string }>(rows: T[]) =>
@@ -150,35 +98,132 @@ const sortByDate = <T extends { date: string, created_at: string }>(rows: T[]) =
     return a.created_at.localeCompare(b.created_at)
   })
 
-const sectionMovements = (card: (typeof filteredSectionCards.value)[number]): SectionMovementRow[] =>
-  sortByDate([
-    ...card.incoming.map(row => ({
-      id: `in-${row.id}`,
-      dir: 'in' as const,
-      date: row.date,
-      created_at: row.created_at,
-      party: row.source,
-      status_name: card.status_name ?? null,
-      quantity_kg: row.quantity_kg,
-      qty_before: row.qty_before,
-      qty_after: row.qty_after,
-      notes: row.notes,
-      raw: row
-    })),
-    ...card.outgoing.map(row => ({
-      id: `out-${row.id}`,
-      dir: 'out' as const,
-      date: row.date,
-      created_at: row.created_at,
-      party: row.destination,
-      status_name: row.status_name || card.status_name || null,
-      quantity_kg: row.quantity_kg,
-      qty_before: row.qty_before,
-      qty_after: row.qty_after,
-      notes: row.notes,
-      raw: row
-    }))
-  ])
+function movementCanEdit(toKind: string | null | undefined) {
+  return toKind === 'store'
+    || toKind === 'store_slot'
+    || toKind === 'mekla'
+    || toKind === 'section'
+}
+
+/** One ربع block: merge all product/status slices under the same section_id. */
+const groupedWorkbookSections = computed((): GroupedWorkbookSection[] => {
+  const bySection = new Map<string, {
+    section_id: string
+    section_name: string
+    card: (typeof filteredSectionCards.value)[number]
+    incoming: Parameters<typeof applySectionRunningBalances>[0]
+    outgoing: Parameters<typeof applySectionRunningBalances>[1]
+    rawByKey: Map<string, any>
+    statusByKey: Map<string, string | null>
+  }>()
+
+  for (const card of filteredSectionCards.value) {
+    let group = bySection.get(card.section_id)
+    if (!group) {
+      group = {
+        section_id: card.section_id,
+        section_name: card.section_name,
+        card,
+        incoming: [],
+        outgoing: [],
+        rawByKey: new Map(),
+        statusByKey: new Map()
+      }
+      bySection.set(card.section_id, group)
+    }
+
+    for (const row of card.incoming) {
+      const key = `in:${row.id}`
+      if (group.rawByKey.has(key)) continue
+      group.rawByKey.set(key, row)
+      const statusName = row.status_name || card.status_name || null
+      group.statusByKey.set(key, statusName)
+      group.incoming.push({
+        id: row.id,
+        date: row.date,
+        created_at: row.created_at,
+        source: row.source,
+        quantity_kg: row.quantity_kg,
+        status_name: statusName,
+        kind: row.kind,
+        product_id: row.product_id,
+        status_id: row.status_id,
+        from_kind: row.from_kind,
+        from_id: row.from_id,
+        to_kind: row.to_kind,
+        to_id: row.to_id
+      })
+    }
+
+    for (const row of card.outgoing) {
+      const key = `out:${row.id}`
+      if (group.rawByKey.has(key)) continue
+      group.rawByKey.set(key, row)
+      const statusName = row.status_name || card.status_name || null
+      group.statusByKey.set(key, statusName)
+      group.outgoing.push({
+        id: row.id,
+        date: row.date,
+        created_at: row.created_at,
+        destination: row.destination,
+        status_name: statusName,
+        quantity_kg: row.quantity_kg,
+        product_id: row.product_id,
+        status_id: row.status_id,
+        to_status_id: row.to_status_id,
+        from_kind: row.from_kind,
+        from_id: row.from_id,
+        to_kind: row.to_kind,
+        to_id: row.to_id
+      })
+    }
+  }
+
+  return [...bySection.values()]
+    .sort((a, b) => a.section_name.localeCompare(b.section_name, 'ar'))
+    .map((group) => {
+      const balanced = applySectionRunningBalances(group.incoming, group.outgoing)
+      const movements = sortByDate([
+        ...balanced.incoming.map(row => ({
+          id: `in-${row.id}`,
+          dir: 'in' as const,
+          date: row.date,
+          created_at: row.created_at,
+          party: row.source,
+          status_name: row.status_name || group.statusByKey.get(`in:${row.id}`) || null,
+          quantity_kg: row.quantity_kg,
+          qty_before: row.qty_before,
+          qty_after: row.qty_after,
+          raw: group.rawByKey.get(`in:${row.id}`)
+        })),
+        ...balanced.outgoing.map(row => ({
+          id: `out-${row.id}`,
+          dir: 'out' as const,
+          date: row.date,
+          created_at: row.created_at,
+          party: row.destination,
+          status_name: row.status_name || group.statusByKey.get(`out:${row.id}`) || null,
+          quantity_kg: row.quantity_kg,
+          qty_before: row.qty_before,
+          qty_after: row.qty_after,
+          raw: group.rawByKey.get(`out:${row.id}`)
+        }))
+      ])
+
+      const kg_in = group.incoming.reduce((s, r) => s + Number(r.quantity_kg || 0), 0)
+      const kg_out = group.outgoing.reduce((s, r) => s + Number(r.quantity_kg || 0), 0)
+
+      return {
+        section_id: group.section_id,
+        section_name: group.section_name,
+        card: group.card,
+        movements,
+        kg_in,
+        kg_out,
+        kg_remaining: kg_in - kg_out
+      }
+    })
+})
 
 const warehouseMovements = computed((): WarehouseMovementRow[] => {
   const ledger = warehouseLedgerCard.value
@@ -189,11 +234,10 @@ const warehouseMovements = computed((): WarehouseMovementRow[] => {
       date: row.date,
       created_at: row.created_at,
       party: row.source,
-      status_name: null as string | null,
+      status_name: row.status_name ?? null,
       quantity_kg: row.quantity_kg,
       qty_before: row.qty_before,
       qty_after: row.qty_after,
-      notes: row.notes,
       section_name: row.section_name,
       product_name: row.product_name,
       raw: row
@@ -204,11 +248,10 @@ const warehouseMovements = computed((): WarehouseMovementRow[] => {
       date: row.date,
       created_at: row.created_at,
       party: row.destination,
-      status_name: row.status_name,
+      status_name: row.status_name ?? null,
       quantity_kg: row.quantity_kg,
       qty_before: row.qty_before,
       qty_after: row.qty_after,
-      notes: row.notes,
       section_name: row.section_name,
       product_name: row.product_name,
       raw: row
@@ -216,14 +259,99 @@ const warehouseMovements = computed((): WarehouseMovementRow[] => {
   ])
 })
 
-/** Remaining ÷ entered (amount stay / amount enter). */
-const remainingInRatio = computed(() => {
-  const inn = Number(warehouseStats.value.kgIn) || 0
-  if (inn <= 0.001) return 0
-  return Number(warehouseStats.value.kgRemaining) / inn
+const transferModalTitle = computed(() => {
+  if (editingMovementId.value) {
+    return `تعديل تحويل — ${transferFromSection.value?.section_name || ''}`.trim()
+  }
+  if (transferScope.value === 'section') {
+    return `تحويل من الربع — ${transferFromSection.value?.section_name || ''}`.trim()
+  }
+  return 'تحويل من الشونة'
 })
 
-const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
+const workbookMovements = computed(() =>
+  warehouseMovements.value.map(row => ({
+    id: row.id,
+    dir: row.dir,
+    date: row.date,
+    party: row.party,
+    status_name: row.status_name,
+    quantity_kg: row.quantity_kg,
+    qty_before: row.qty_before,
+    qty_after: row.qty_after,
+    section_name: row.section_name,
+    can_edit: row.dir === 'out' ? movementCanEdit(row.raw?.to_kind) : undefined
+  }))
+)
+
+const workbookSections = computed(() =>
+  groupedWorkbookSections.value.map(group => ({
+    key: group.section_id,
+    section_name: group.section_name,
+    status_name: null,
+    product_name: null,
+    kg_in: group.kg_in,
+    kg_out: group.kg_out,
+    kg_remaining: group.kg_remaining,
+    movements: group.movements.map(row => ({
+      id: row.id,
+      dir: row.dir,
+      date: row.date,
+      party: row.party,
+      status_name: row.status_name,
+      quantity_kg: row.quantity_kg,
+      qty_before: row.qty_before,
+      qty_after: row.qty_after,
+      can_edit: row.dir === 'out' ? movementCanEdit(row.raw?.to_kind) : undefined
+    }))
+  }))
+)
+
+function openEditMovementFromSheet(
+  scope: 'total' | 'section',
+  dataIndex: number,
+  sectionIndex?: number
+) {
+  if (scope === 'total') {
+    const row = warehouseMovements.value[dataIndex]
+    if (!row || row.dir !== 'out') return
+    openEditMovement(row.raw)
+    return
+  }
+  const group = groupedWorkbookSections.value[sectionIndex ?? -1]
+  const row = group?.movements[dataIndex]
+  if (!row || row.dir !== 'out') return
+  openEditMovement(row.raw)
+}
+
+async function deleteMovementFromSheet(
+  scope: 'total' | 'section',
+  dataIndex: number,
+  sectionIndex?: number
+) {
+  if (scope === 'total') {
+    const row = warehouseMovements.value[dataIndex]
+    if (!row || row.dir !== 'out') return
+    await deleteMovement(row.raw)
+    return
+  }
+  const group = groupedWorkbookSections.value[sectionIndex ?? -1]
+  const row = group?.movements[dataIndex]
+  if (!row || row.dir !== 'out') return
+  await deleteMovement(row.raw)
+}
+
+function openEditSectionByIndex(sectionIndex: number) {
+  const group = groupedWorkbookSections.value[sectionIndex]
+  if (!group) return
+  openEditSection(group.card)
+}
+
+async function deleteSectionByIndex(sectionIndex: number) {
+  const group = groupedWorkbookSections.value[sectionIndex]
+  if (!group) return
+  await softDeleteSection(group.card)
+}
 </script>
 
 <template>
@@ -278,234 +406,41 @@ const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
           >
             إضافة ربع
           </UButton>
-        </div>
-      </div>
-
-      <!-- Row 2: warehouse totals + in/out ratio + waste -->
-      <div
-        v-if="!loading"
-        class="flex flex-wrap items-center gap-2 sm:gap-3"
-      >
-        <div class="homos-scroll flex min-w-0 flex-1 flex-nowrap items-stretch gap-1.5 overflow-x-auto tabular-nums">
-          <UCard class="min-w-20 shrink-0 text-center" :ui="statsCardUi">
-            <p class="text-xs font-medium text-muted">
-              الأرباع
-            </p>
-            <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-              {{ warehouseStats.sectionsCount }}
-            </p>
-          </UCard>
-          <UCard class="min-w-24 shrink-0 text-center" :ui="statsCardUi">
-            <p class="text-xs font-medium text-muted">
-              وارد
-            </p>
-            <p class="mt-0.5 text-base font-semibold tracking-tight text-success" dir="ltr">
-              {{ formatNumber(warehouseStats.kgIn) }}
-            </p>
-          </UCard>
-          <UCard class="min-w-24 shrink-0 text-center" :ui="statsCardUi">
-            <p class="text-xs font-medium text-muted">
-              منصرف
-            </p>
-            <p class="mt-0.5 text-base font-semibold tracking-tight text-primary" dir="ltr">
-              {{ formatNumber(warehouseStats.kgOut) }}
-            </p>
-          </UCard>
-          <UCard class="min-w-24 shrink-0 text-center" :ui="statsCardUi">
-            <p class="text-xs font-medium text-muted">
-              الرصيد
-            </p>
-            <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-              {{ formatNumber(warehouseStats.kgRemaining) }}
-            </p>
-          </UCard>
-          <UCard class="min-w-28 shrink-0 text-center" :ui="statsCardUi">
-            <p class="text-xs font-medium text-muted">
-              نسبة المتبقي
-            </p>
-            <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-              {{ formatNumber(remainingInRatio * 100) }}%
-            </p>
-          </UCard>
-        </div>
-
-        <UButton
-          icon="i-lucide-trash-2"
-          size="sm"
-          color="neutral"
-          variant="soft"
-          class="shrink-0"
-          :loading="saving"
-          :disabled="!selectedProductId || warehouseStats.kgRemaining <= 0.001"
-          @click="saveWasteAllRemaining"
-        >
-          تسجيل هدر
-        </UButton>
-      </div>
-    </div>
-
-    <!-- Excel-style inline transfer row (no modal) -->
-    <div
-      v-if="transferModalOpen"
-      class="homos-scroll w-full overflow-x-auto rounded-lg border border-warning/40 bg-warning/5"
-    >
-      <div class="flex w-max min-w-full items-end gap-2 p-3">
-        <div class="min-w-40 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            المصدر
-          </p>
-          <p class="text-sm font-medium text-highlighted whitespace-nowrap">
-            <template v-if="editingMovementId">
-              تعديل تحويل — {{ transferFromSection?.section_name }}
-            </template>
-            <template v-else-if="transferScope === 'section'">
-              {{ transferFromSection?.section_name }}
-            </template>
-            <template v-else>
-              الشونة (توزيع تلقائي)
-            </template>
-            <span class="ms-1 text-muted font-normal" dir="ltr">
-              ({{ formatNumber(transferAvailableKg) }} كجم)
-            </span>
-          </p>
-        </div>
-        <div class="w-36 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            التاريخ
-          </p>
-          <UInput v-model="transferForm.movement_date" type="date" class="w-full" dir="ltr" :ui="cellInputUi" />
-        </div>
-        <div class="w-32 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            من الحالة
-          </p>
-          <USelect
-            v-model="transferForm.status_id"
-            :items="transferStatusOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-            placeholder="من الحالة"
-          />
-        </div>
-        <div class="w-32 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            إلى الحالة
-          </p>
-          <USelect
-            v-model="transferForm.to_status_id"
-            :items="transferStatusOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-            placeholder="إلى الحالة"
-          />
-        </div>
-        <div class="w-32 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            نوع الوجهة
-          </p>
-          <USelect
-            v-model="transferForm.to_kind"
-            :items="transferKindOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-            @update:model-value="onTransferKindChange"
-          />
-        </div>
-        <div
-          v-if="transferForm.to_kind === 'warehouse'"
-          class="w-52 shrink-0"
-        >
-          <p class="mb-1 text-xs text-muted">
-            الشونة
-          </p>
-          <USelect
-            v-model="transferForm.to_warehouse_id"
-            :items="destWarehouseOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-            placeholder="الشونة"
-            @update:model-value="onTransferWarehouseChange"
-          />
-        </div>
-        <div class="w-40 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            {{ transferForm.to_kind === 'warehouse' ? 'الربع' : 'الوجهة' }}
-          </p>
-          <USelect
-            v-model="transferForm.to_id"
-            :items="transferToOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-            :placeholder="transferForm.to_kind === 'warehouse' ? 'الربع' : 'الوجهة'"
-          />
-        </div>
-        <div class="w-28 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            الكمية
-          </p>
-          <DecimalInput
-            :model-value="transferForm.quantity_kg"
-            placeholder="كجم"
-            @update:model-value="setTransferQty"
-          />
-        </div>
-        <div class="w-44 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            ملاحظات
-          </p>
-          <UInput v-model="transferForm.notes" class="w-full" :ui="cellInputUi" />
-        </div>
-        <div class="flex shrink-0 items-center gap-1 pb-0.5">
           <UButton
+            v-if="!loading"
+            icon="i-lucide-arrow-left-right"
             size="sm"
-            :loading="saving"
-            :disabled="!editingMovementId && !transferAllocation.ok"
-            @click="saveTransfer"
+            color="primary"
+            class="shrink-0"
+            :disabled="!selectedProductId || warehouseStats.kgRemaining <= 0.001"
+            @click="openWarehouseTransfer"
           >
-            {{ editingMovementId ? 'تحديث' : 'حفظ' }}
+            تحويل من الشونة
           </UButton>
           <UButton
+            v-if="!loading"
+            icon="i-lucide-trash-2"
             size="sm"
             color="neutral"
-            variant="outline"
-            @click="cancelTransfer"
+            variant="soft"
+            class="shrink-0"
+            :loading="saving"
+            :disabled="!selectedProductId || warehouseStats.kgRemaining <= 0.001"
+            @click="saveWasteAllRemaining"
           >
-            إلغاء
+            تسجيل هدر
           </UButton>
-        </div>
-      </div>
-      <div
-        v-if="transferForm.quantity_kg && Number(transferForm.quantity_kg) > 0"
-        class="border-t border-default px-3 py-2 text-sm"
-      >
-        <p
-          v-if="!transferAllocation.ok"
-          class="text-error"
-        >
-          الرصيد غير كافٍ — المتاح
-          <span dir="ltr">{{ formatNumber(transferAllocation.total) }}</span>
-          كجم
-        </p>
-        <div
-          v-else
-          class="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted"
-        >
-          <span class="font-medium text-highlighted">
-            خطة التوزيع
-          </span>
-          <span
-            v-for="line in transferAllocation.plan"
-            :key="`${line.section_id}-${line.status_id}`"
-            class="whitespace-nowrap"
+          <UButton
+            v-if="!loading"
+            icon="i-lucide-wallet"
+            size="sm"
+            color="neutral"
+            variant="soft"
+            class="shrink-0"
+            @click="openCreateExpense"
           >
-            {{ line.section_name }}:
-            <span dir="ltr" class="font-medium text-highlighted">{{ formatNumber(line.qty) }}</span>
-          </span>
+            إضافة مصروف
+          </UButton>
         </div>
       </div>
     </div>
@@ -533,378 +468,26 @@ const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
           </div>
         </div>
 
-      <div
-        ref="splitRoot"
-        dir="rtl"
-        class="flex h-[calc(100dvh-14rem)] w-full min-h-[24rem] overflow-hidden"
-        :class="isResizing ? 'select-none' : ''"
-      >
-        <!-- Col 1 (RTL right): warehouse totals -->
-        <div
-          class="homos-scroll min-h-0 min-w-0 overflow-x-auto overflow-y-auto pe-1"
-          :style="{ width: `${totalColPct}%` }"
-        >
-        <UCard
-          class="w-max min-w-full"
-          :ui="{ body: 'flex w-max min-w-full flex-col gap-3 space-y-0 overflow-visible p-4 sm:p-5' }"
-        >
-          <div class="flex shrink-0 flex-wrap items-center gap-2">
-            <span class="h-4 w-1 shrink-0 rounded-full bg-primary" />
-            <UButton
-              icon="i-lucide-arrow-left-right"
-              size="sm"
-              color="primary"
-              class="shrink-0"
-              :disabled="!selectedProductId || warehouseStats.kgRemaining <= 0.001"
-              @click="openWarehouseTransfer"
-            >
-              تحويل من الشونة
-            </UButton>
-            <h3 class="text-base font-semibold text-highlighted whitespace-nowrap">
-              إجمالي حركات الشونة
-            </h3>
-          </div>
-
-          <div :class="tablePanelClass">
-            <div class="flex shrink-0 items-center gap-2 border-b border-default bg-elevated/70 px-3 py-2">
-              <p class="text-sm font-semibold text-highlighted">
-                الحركة علي الشونة
-              </p>
-              <UBadge size="sm" variant="subtle" color="neutral">
-                {{ warehouseMovements.length }}
-              </UBadge>
-            </div>
-            <table dir="rtl" :class="tableClass">
-              <thead class="bg-elevated text-muted">
-                <tr>
-                  <th :class="cellNowrapClass + ' font-medium'" />
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    التاريخ
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium text-start'">
-                    الربع
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium text-start'">
-                    الطرف
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium text-start'">
-                    الحالة
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    قبل
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    كجم
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    بعد
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    إجراءات
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="row in warehouseMovements"
-                  :key="row.id"
-                  class="border-t border-default"
-                >
-                  <td :class="cellNowrapClass">
-                    <UIcon
-                      :name="row.dir === 'in' ? 'i-lucide-arrow-down-left' : 'i-lucide-arrow-up-right'"
-                      :class="row.dir === 'in' ? 'size-4 text-success' : 'size-4 text-primary'"
-                    />
-                  </td>
-                  <td :class="cellNowrapClass" dir="ltr">
-                    {{ row.date }}
-                  </td>
-                  <td :class="cellNowrapClass + ' text-start font-medium'">
-                    {{ row.section_name }}
-                  </td>
-                  <td :class="cellNowrapClass + ' text-start'">
-                    {{ row.party }}
-                  </td>
-                  <td :class="cellNowrapClass + ' text-start'">
-                    {{ row.status_name || '—' }}
-                  </td>
-                  <td :class="cellNowrapClass + ' text-muted'" dir="ltr">
-                    {{ formatNumber(row.qty_before) }}
-                  </td>
-                  <td
-                    :class="[
-                      cellNowrapClass,
-                      'font-medium',
-                      row.dir === 'in' ? 'text-success' : 'text-primary'
-                    ]"
-                    dir="ltr"
-                  >
-                    {{ formatNumber(row.quantity_kg) }}
-                  </td>
-                  <td :class="cellNowrapClass + ' font-medium text-highlighted'" dir="ltr">
-                    {{ formatNumber(row.qty_after) }}
-                  </td>
-                  <td class="p-1">
-                    <div
-                      v-if="row.dir === 'out'"
-                      class="flex justify-center gap-0.5"
-                    >
-                      <UButton
-                        size="xs"
-                        variant="ghost"
-                        icon="i-lucide-pencil"
-                        @click="openEditMovement(row.raw)"
-                      />
-                      <UButton
-                        size="xs"
-                        variant="ghost"
-                        color="error"
-                        icon="i-lucide-trash-2"
-                        :disabled="saving"
-                        @click="deleteMovement(row.raw)"
-                      />
-                    </div>
-                    <span
-                      v-else
-                      class="text-muted"
-                    >—</span>
-                  </td>
-                </tr>
-                <tr v-if="!warehouseMovements.length">
-                  <td
-                    colspan="9"
-                    class="p-4 text-center text-muted"
-                  >
-                    لا توجد حركات
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </UCard>
+      <div class="flex h-[calc(100dvh-14rem)] w-full min-h-[24rem] min-h-0 flex-col overflow-hidden">
+          <ClientOnly>
+            <WarehouseDetailWorkbook
+              :key="warehouseId"
+              class="min-h-0 flex-1"
+              :warehouse-id="warehouseId"
+              :stats="warehouseStats"
+              :movements="workbookMovements"
+              :sections="workbookSections"
+              :open-edit-section="openEditSectionByIndex"
+              :delete-section="deleteSectionByIndex"
+              :open-edit-movement="openEditMovementFromSheet"
+              :delete-movement="deleteMovementFromSheet"
+            />
+            <template #fallback>
+              <CardsSkeleton :count="1" />
+            </template>
+          </ClientOnly>
         </div>
 
-        <!-- Resize handle -->
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="تغيير عرض الأعمدة"
-          class="group relative z-10 flex w-3 shrink-0 cursor-col-resize items-stretch justify-center touch-none"
-          @pointerdown="onSplitPointerDown"
-        >
-          <span
-            class="my-2 w-px rounded-full bg-default transition-colors group-hover:bg-primary group-active:bg-primary"
-            :class="isResizing ? 'bg-primary' : ''"
-          />
-        </div>
-
-        <!-- Col 2: sections stacked vertically -->
-        <div
-          class="homos-scroll flex min-h-0 min-w-0 flex-col gap-4 overflow-x-auto overflow-y-auto ps-1"
-          :style="{ width: `${100 - totalColPct}%` }"
-        >
-        <div
-          v-if="!filteredSectionCards.length"
-          class="rounded-lg border border-default bg-elevated/40 p-8 text-center text-muted"
-        >
-          {{ selectedProductId ? 'لا توجد أرباع لهذا الصنف' : 'لا توجد أرباع — أضف ربعاً للبدء' }}
-        </div>
-
-        <UCard
-          v-for="card in filteredSectionCards"
-          :key="sectionRowKey(card)"
-          class="w-max min-w-full shrink-0"
-          :ui="{ body: 'flex w-max min-w-full flex-col gap-3 space-y-0 overflow-visible p-4 sm:p-5' }"
-        >
-          <div class="flex shrink-0 flex-nowrap items-center gap-3">
-            <div class="flex min-w-0 flex-wrap items-center gap-2">
-              <span class="h-4 w-1 shrink-0 rounded-full bg-warning" />
-              <div class="flex shrink-0 items-center gap-1">
-                <UButton
-                  size="sm"
-                  color="primary"
-                  icon="i-lucide-arrow-left-right"
-                  :disabled="Number(card.kg_remaining) <= 0.001"
-                  @click="openTransfer(card)"
-                >
-                  تحويل
-                </UButton>
-                <UButton
-                  size="sm"
-                  variant="ghost"
-                  icon="i-lucide-pencil"
-                  @click="openEditSection(card)"
-                />
-                <UButton
-                  size="sm"
-                  variant="ghost"
-                  color="error"
-                  icon="i-lucide-trash-2"
-                  :disabled="saving"
-                  @click="softDeleteSection(card)"
-                />
-              </div>
-              <h3 class="text-lg font-semibold text-highlighted whitespace-nowrap">
-                {{ card.section_name }}
-              </h3>
-              <UBadge
-                v-if="card.status_name"
-                size="sm"
-                variant="subtle"
-                color="neutral"
-              >
-                {{ card.status_name }}
-              </UBadge>
-              <UBadge
-                v-if="card.product_name && !selectedProductId"
-                size="sm"
-                variant="subtle"
-                color="warning"
-              >
-                {{ card.product_name }}
-              </UBadge>
-              <div :class="sectionStatsClass">
-                <div class="shrink-0 rounded-md bg-elevated/80 px-2.5 py-1 text-center">
-                  <span class="text-xs text-muted">وارد</span>
-                  <span class="ms-1.5 font-semibold text-success" dir="ltr">
-                    {{ formatNumber(card.kg_in) }}
-                  </span>
-                </div>
-                <div class="shrink-0 rounded-md bg-elevated/80 px-2.5 py-1 text-center">
-                  <span class="text-xs text-muted">منصرف</span>
-                  <span class="ms-1.5 font-semibold text-primary" dir="ltr">
-                    {{ formatNumber(card.kg_out) }}
-                  </span>
-                </div>
-                <div class="shrink-0 rounded-md bg-warning/10 px-2.5 py-1 text-center">
-                  <span class="text-xs text-muted">رصيد</span>
-                  <span class="ms-1.5 font-semibold text-highlighted" dir="ltr">
-                    {{ formatNumber(card.kg_remaining) }}
-                  </span>
-                </div>
-              </div>
-              <p
-                v-if="card.notes"
-                class="w-full text-sm text-muted"
-              >
-                {{ card.notes }}
-              </p>
-            </div>
-          </div>
-
-          <div :class="tablePanelClass">
-            <div class="flex shrink-0 items-center gap-2 border-b border-default bg-elevated/70 px-3 py-2">
-              <p class="text-sm font-semibold text-highlighted">
-                الحركة علي الربع
-              </p>
-              <UBadge size="sm" variant="subtle" color="neutral">
-                {{ sectionMovements(card).length }}
-              </UBadge>
-            </div>
-            <table dir="rtl" :class="tableClass">
-              <thead class="bg-elevated text-muted">
-                <tr>
-                  <th :class="cellNowrapClass + ' font-medium'" />
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    التاريخ
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium text-start'">
-                    الطرف
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium text-start'">
-                    الحالة
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    قبل
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    كجم
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    بعد
-                  </th>
-                  <th :class="cellNowrapClass + ' font-medium'">
-                    إجراءات
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="row in sectionMovements(card)"
-                  :key="row.id"
-                  class="border-t border-default"
-                >
-                  <td :class="cellNowrapClass">
-                    <UIcon
-                      :name="row.dir === 'in' ? 'i-lucide-arrow-down-left' : 'i-lucide-arrow-up-right'"
-                      :class="row.dir === 'in' ? 'size-4 text-success' : 'size-4 text-primary'"
-                    />
-                  </td>
-                  <td :class="cellNowrapClass" dir="ltr">
-                    {{ row.date }}
-                  </td>
-                  <td :class="cellNowrapClass + ' text-start'">
-                    {{ row.party }}
-                  </td>
-                  <td :class="cellNowrapClass + ' text-start'">
-                    {{ row.status_name || '—' }}
-                  </td>
-                  <td :class="cellNowrapClass + ' text-muted'" dir="ltr">
-                    {{ formatNumber(row.qty_before) }}
-                  </td>
-                  <td
-                    :class="[
-                      cellNowrapClass,
-                      'font-medium',
-                      row.dir === 'in' ? 'text-success' : 'text-primary'
-                    ]"
-                    dir="ltr"
-                  >
-                    {{ formatNumber(row.quantity_kg) }}
-                  </td>
-                  <td :class="cellNowrapClass + ' font-medium text-highlighted'" dir="ltr">
-                    {{ formatNumber(row.qty_after) }}
-                  </td>
-                  <td class="p-1">
-                    <div
-                      v-if="row.dir === 'out'"
-                      class="flex justify-center gap-0.5"
-                    >
-                      <UButton
-                        size="xs"
-                        variant="ghost"
-                        icon="i-lucide-pencil"
-                        @click="openEditMovement(row.raw)"
-                      />
-                      <UButton
-                        size="xs"
-                        variant="ghost"
-                        color="error"
-                        icon="i-lucide-trash-2"
-                        :disabled="saving"
-                        @click="deleteMovement(row.raw)"
-                      />
-                    </div>
-                    <span
-                      v-else
-                      class="text-muted"
-                    >—</span>
-                  </td>
-                </tr>
-                <tr v-if="!sectionMovements(card).length">
-                  <td
-                    colspan="8"
-                    class="p-4 text-center text-muted"
-                  >
-                    لا توجد حركات
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </UCard>
-        </div>
-      </div>
       </div>
     </template>
 
@@ -914,9 +497,6 @@ const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
           <UFormField label="الاسم" required>
             <UInput v-model="sectionForm.name" class="w-full" placeholder="مثال: ربع أ" />
           </UFormField>
-          <UFormField label="ملاحظات">
-            <UTextarea v-model="sectionForm.notes" class="w-full" :rows="3" />
-          </UFormField>
         </div>
       </template>
       <template #footer>
@@ -925,6 +505,270 @@ const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
             إلغاء
           </UButton>
           <UButton :loading="saving" @click="saveSection">
+            حفظ
+          </UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="transferModalOpen"
+      :title="transferModalTitle"
+      :ui="{ content: 'sm:max-w-4xl' }"
+      @update:open="(v: boolean) => { if (!v) cancelTransfer() }"
+    >
+      <template #body>
+        <div class="space-y-5">
+          <div class="rounded-lg border border-default bg-elevated/40 px-4 py-3">
+            <p class="text-base text-muted">
+              المصدر
+            </p>
+            <p class="mt-1 text-lg font-semibold text-highlighted">
+              <template v-if="transferScope === 'section'">
+                {{ transferFromSection?.section_name }}
+              </template>
+              <template v-else>
+                الشونة (توزيع تلقائي)
+              </template>
+              <span class="ms-2 text-base font-normal text-muted" dir="ltr">
+                ({{ formatNumber(transferAvailableKg) }} كجم)
+              </span>
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <UFormField
+              label="التاريخ"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <UInput
+                v-model="transferForm.movement_date"
+                type="date"
+                size="xl"
+                class="w-full"
+                dir="ltr"
+              />
+            </UFormField>
+            <UFormField
+              label="من الحالة"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelect
+                v-model="transferForm.status_id"
+                :items="transferStatusOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                placeholder="من الحالة"
+              />
+            </UFormField>
+            <UFormField
+              label="إلى الحالة"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelect
+                v-model="transferForm.to_status_id"
+                :items="transferStatusOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                placeholder="إلى الحالة"
+              />
+            </UFormField>
+            <UFormField
+              label="نوع الوجهة"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelect
+                v-model="transferForm.to_kind"
+                :items="transferKindOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                @update:model-value="onTransferKindChange"
+              />
+            </UFormField>
+            <UFormField
+              v-if="transferForm.to_kind === 'warehouse'"
+              label="الشونة"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelect
+                v-model="transferForm.to_warehouse_id"
+                :items="destWarehouseOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                placeholder="الشونة"
+                @update:model-value="onTransferWarehouseChange"
+              />
+            </UFormField>
+            <UFormField
+              :label="transferForm.to_kind === 'warehouse' ? 'الربع' : transferForm.to_kind === 'store' ? 'المخزن' : 'الوجهة'"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelect
+                v-model="transferForm.to_id"
+                :items="transferToOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                :placeholder="transferForm.to_kind === 'warehouse' ? 'الربع' : transferForm.to_kind === 'store' ? 'المخزن' : 'الوجهة'"
+                @update:model-value="transferForm.to_kind === 'store' ? onTransferStoreChange() : undefined"
+              />
+            </UFormField>
+            <UFormField
+              v-if="transferForm.to_kind === 'store'"
+              label="خانة"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelect
+                v-model="transferForm.to_slot_id"
+                :items="transferStoreSlotOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                placeholder="الخانة"
+              />
+            </UFormField>
+            <UFormField
+              label="الكمية"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="transferForm.quantity_kg"
+                size="xl"
+                placeholder="كجم"
+                @update:model-value="setTransferQty"
+              />
+            </UFormField>
+          </div>
+
+          <div
+            v-if="transferForm.quantity_kg && Number(transferForm.quantity_kg) > 0"
+            class="rounded-lg border border-default px-4 py-3 text-base"
+          >
+            <p
+              v-if="!transferAllocation.ok"
+              class="text-error"
+            >
+              الرصيد غير كافٍ — المتاح
+              <span dir="ltr">{{ formatNumber(transferAllocation.total) }}</span>
+              كجم
+            </p>
+            <div
+              v-else
+              class="flex flex-wrap items-center gap-x-4 gap-y-2 text-muted"
+            >
+              <span class="font-semibold text-highlighted">
+                خطة التوزيع
+              </span>
+              <span
+                v-for="line in transferAllocation.plan"
+                :key="`${line.section_id}-${line.status_id}`"
+                class="whitespace-nowrap"
+              >
+                {{ line.section_name }}:
+                <span dir="ltr" class="font-semibold text-highlighted">{{ formatNumber(line.qty) }}</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="lg"
+            @click="cancelTransfer"
+          >
+            إلغاء
+          </UButton>
+          <UButton
+            size="lg"
+            :loading="saving"
+            :disabled="!editingMovementId && !transferAllocation.ok"
+            @click="saveTransfer"
+          >
+            {{ editingMovementId ? 'تحديث' : 'حفظ' }}
+          </UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      v-model:open="expenseModalOpen"
+      :title="editingExpense ? 'تعديل مصروف' : 'إضافة مصروف'"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <UFormField
+            label="التاريخ"
+            required
+          >
+            <UInput
+              v-model="expenseForm.payment_date"
+              type="date"
+              class="w-full"
+              dir="ltr"
+            />
+          </UFormField>
+          <UFormField
+            label="العنوان"
+            required
+          >
+            <UInput
+              v-model="expenseForm.title"
+              class="w-full"
+              placeholder="مثال: كهرباء / مياه / عمال"
+            />
+          </UFormField>
+          <UFormField
+            label="المبلغ"
+            required
+          >
+            <DecimalInput
+              :model-value="expenseForm.amount"
+              placeholder="0.00"
+              @update:model-value="setExpenseAmount"
+            />
+          </UFormField>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton
+            color="neutral"
+            variant="outline"
+            @click="expenseModalOpen = false"
+          >
+            إلغاء
+          </UButton>
+          <UButton
+            :loading="saving"
+            @click="saveExpense"
+          >
             حفظ
           </UButton>
         </div>

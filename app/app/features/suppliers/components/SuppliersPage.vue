@@ -24,6 +24,7 @@ const {
   openCreate,
   openEdit,
   save,
+  setFormDecimal,
   softDelete
 } = useSuppliers()
 
@@ -147,18 +148,19 @@ const stickyActionsHead
                 class="group border-t border-default hover:bg-muted/60"
               >
                 <td class="p-3 font-medium">
-                  <NuxtLink
-                    :to="`/suppliers/${row.supplier_id}/${row.product_id}`"
-                    class="hover:text-primary hover:underline"
-                  >
-                    {{ row.supplier_name }}
-                  </NuxtLink>
-                  <p
-                    v-if="row.notes"
-                    class="mt-0.5 text-xs font-normal text-muted"
-                  >
-                    {{ row.notes }}
-                  </p>
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="inline-block size-3 shrink-0 rounded-full border border-default"
+                      :style="{ backgroundColor: row.color || '#64748b' }"
+                      :title="row.color || '#64748b'"
+                    />
+                    <NuxtLink
+                      :to="`/suppliers/${row.supplier_id}/${row.product_id}`"
+                      class="hover:text-primary hover:underline"
+                    >
+                      {{ row.supplier_name }}
+                    </NuxtLink>
+                  </div>
                 </td>
                 <td class="p-3">
                   {{ accountTypeLabel(row.account_type_name) }}
@@ -299,12 +301,32 @@ const stickyActionsHead
               :disabled="!!editing"
             />
           </UFormField>
-          <UFormField label="ملاحظات">
-            <UTextarea
-              v-model="form.notes"
+          <UFormField
+            label="معامل الأردب (كجم)"
+            required
+          >
+            <DecimalInput
+              :model-value="form.ardab_factor"
               class="w-full"
-              :rows="3"
+              @update:model-value="setFormDecimal('ardab_factor', $event)"
             />
+          </UFormField>
+          <UFormField label="لون الملف">
+            <div class="flex items-center gap-3">
+              <input
+                v-model="form.color"
+                type="color"
+                class="size-10 cursor-pointer rounded-md border border-default bg-transparent p-1"
+                :title="form.color"
+              >
+              <UInput
+                v-model="form.color"
+                class="w-full font-mono uppercase"
+                dir="ltr"
+                placeholder="#64748B"
+                maxlength="7"
+              />
+            </div>
           </UFormField>
         </div>
       </template>

@@ -7,6 +7,7 @@ import {
   type SupplierBalance
 } from '~/composables/queries/useSupplierBalancesQuery'
 import { useActiveProductsQuery } from '~/composables/queries/useLookupQueries'
+import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 
 export type { SupplierBalance }
 
@@ -27,10 +28,21 @@ export function useSuppliers() {
 
   const form = reactive({
     name: '',
-    notes: '',
+    color: '#64748b' as string,
     account_type_id: '' as string,
-    product_id: '' as string
+    product_id: '' as string,
+    ardab_factor: '170' as string
   })
+
+  const normalizeProfileColor = (raw: string | null | undefined) => {
+    const value = String(raw || '').trim()
+    if (/^#[0-9A-Fa-f]{6}$/.test(value)) return value.toUpperCase()
+    return null
+  }
+
+  const setFormDecimal = (field: 'ardab_factor', raw: string) => {
+    form[field] = normalizeDecimalInput(raw)
+  }
 
   const formProductOptions = computed(() =>
     (productsQuery.data.value ?? []).map(p => ({
@@ -114,7 +126,6 @@ export function useSuppliers() {
     if (!q) return rows
     return rows.filter(s =>
       s.supplier_name.includes(q)
-      || (s.notes || '').includes(q)
       || (s.product_name || '').includes(q)
       || (s.account_type_name || '').includes(q)
     )
@@ -151,8 +162,9 @@ export function useSuppliers() {
   const openCreate = async () => {
     editing.value = null
     form.name = ''
-    form.notes = ''
+    form.color = '#64748b'
     form.product_id = ''
+    form.ardab_factor = '170'
     await loadTypes()
     await productsQuery.refetch()
     form.account_type_id = ensureDefaultTypeId()
@@ -163,9 +175,10 @@ export function useSuppliers() {
   const openEdit = (row: SupplierBalance) => {
     editing.value = row
     form.name = row.supplier_name
-    form.notes = row.notes || ''
+    form.color = normalizeProfileColor(row.color) || '#64748b'
     form.account_type_id = row.account_type_id
     form.product_id = row.product_id || ''
+    form.ardab_factor = String(Number(row.ardab_factor) || 170)
     modalOpen.value = true
   }
 
@@ -182,13 +195,19 @@ export function useSuppliers() {
       toast.add({ title: 'اختر الصنف', color: 'warning' })
       return
     }
+    const ardabFactor = parseDecimal(form.ardab_factor)
+    if (!(ardabFactor > 0)) {
+      toast.add({ title: 'معامل الأردب يجب أن يكون أكبر من صفر', color: 'warning' })
+      return
+    }
     saving.value = true
     try {
       const payload = {
         name: form.name.trim(),
-        notes: form.notes.trim() || null,
+        color: normalizeProfileColor(form.color),
         account_type_id: form.account_type_id,
         product_id: form.product_id,
+        ardab_factor: ardabFactor,
         is_active: true
       }
       if (editing.value) {
@@ -245,6 +264,42 @@ export function useSuppliers() {
     }
   }
 
+  /** Inline cell save for Excel sheet (name only). */
+  const saveInlineField = async (
+    row: SupplierBalance,
+    field: 'name',
+    value: string
+  ) => {
+    const next = value.trim()
+    if (field === 'name') {
+      if (!next) {
+        toast.add({ title: 'الاسم مطلوب', color: 'warning' })
+        return false
+      }
+      if (next === row.supplier_name) return true
+    }
+
+    saving.value = true
+    try {
+      const { error } = await client
+        .from('suppliers')
+        .update({ name: next })
+        .eq('id', row.supplier_id)
+      if (error) throw error
+      toast.add({
+        title: 'تم تحديث الاسم',
+        color: 'success'
+      })
+      await invalidateSupplierQueries()
+      return true
+    } catch (e: any) {
+      toast.add({ title: 'فشل الحفظ', description: e.message, color: 'error' })
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
   return {
     loading: initialLoading,
     initialLoading,
@@ -269,7 +324,9 @@ export function useSuppliers() {
     openCreate,
     openEdit,
     save,
+    setFormDecimal,
     softDelete,
+    saveInlineField,
     refetch
   }
 }

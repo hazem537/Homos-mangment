@@ -14,11 +14,13 @@
     "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
+    "@handsontable/vue3": "^16.2.0",
     "@iconify-json/lucide": "^1.2.129",
     "@iconify-json/simple-icons": "^1.2.94",
     "@nuxt/ui": "^4.11.0",
     "@nuxtjs/supabase": "^2.0.10",
     "@tanstack/vue-query": "^5.107.1",
+    "handsontable": "^16.2.0",
     "nuxt": "^4.5.2",
     "tailwindcss": "^4.3.3"
   },

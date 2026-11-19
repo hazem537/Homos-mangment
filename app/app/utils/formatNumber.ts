@@ -1,18 +1,30 @@
+/** LTR isolate — keeps digits from flipping inside RTL sheets/UI. */
+const LRI = '\u2066'
+const PDI = '\u2069'
+
+function ltr(text: string) {
+  return `${LRI}${text}${PDI}`
+}
+
 /** Display only — does not change stored/calculated values. Always 2 decimal places. */
 export function formatNumber(n: number | null | undefined) {
   const v = nearZero(n) ? 0 : Number(n ?? 0)
-  // Latin digits + comma decimals; widen thousand gaps (fr-FR uses a thin space)
-  return v
-    .toLocaleString('fr-FR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    })
-    .replace(/[\u202F\u00A0]/g, '  ')
+  // Spreadsheet-style: 10,080.00 (avoids RTL flipping of fr-FR "10  080,00")
+  const body = v.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+  return ltr(body)
 }
 
-/** Money display with currency postfix. */
+/** Money display with currency postfix (number LTR, currency readable in RTL). */
 export function formatMoney(n: number | null | undefined) {
-  return `${formatNumber(n)}\u00A0جنيه`
+  const v = nearZero(n) ? 0 : Number(n ?? 0)
+  const body = v.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+  return ltr(`${body}\u00A0جنيه`)
 }
 
 /**
@@ -37,21 +49,20 @@ export function formatCompactNumber(n: number | null | undefined) {
 
   const scaled = abs / divisor
   const digits = scaled >= 100 ? 1 : 2
-  const body = scaled
-    .toLocaleString('fr-FR', {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits
-    })
-    .replace(/[\u202F\u00A0]/g, '  ')
+  const body = scaled.toLocaleString('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  })
 
-  return `${neg}${body} ${label}`
+  return ltr(`${neg}${body} ${label}`)
 }
 
 /** Compact money; full value available via formatMoney for tooltips. */
 export function formatCompactMoney(n: number | null | undefined) {
   const v = nearZero(n) ? 0 : Number(n ?? 0)
   if (Math.abs(v) < 1000) return formatMoney(v)
-  return `${formatCompactNumber(v)}\u00A0جنيه`
+  const compact = formatCompactNumber(v).replaceAll(LRI, '').replaceAll(PDI, '')
+  return ltr(`${compact}\u00A0جنيه`)
 }
 
 /** Treat tiny float leftovers as zero (display / badge). */
@@ -69,11 +80,24 @@ export function signedTone(n: number | null | undefined): 'warning' | 'error' | 
 
 /** Accept `.` (and `,`) while typing; map Arabic digits to Western. */
 export function normalizeDecimalInput(raw: string): string {
-  const western = String(raw ?? '')
+  let western = String(raw ?? '')
+    .replace(/[\u2066\u2067\u2068\u2069\u200E\u200F]/g, '')
+    .replace(/جنيه/gi, '')
     .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
     .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
-    .replace(/,/g, '.')
-    .replace(/[^\d.]/g, '')
+    .trim()
+
+  const hasDot = western.includes('.')
+  const hasComma = western.includes(',')
+  if (hasDot && hasComma) {
+    // 10,080.00 → thousand commas
+    western = western.replace(/,/g, '')
+  } else if (hasComma && !hasDot) {
+    // 10080,00 → decimal comma (legacy fr-FR style)
+    western = western.replace(/,/g, '.')
+  }
+
+  western = western.replace(/[^\d.]/g, '')
 
   const firstDot = western.indexOf('.')
   if (firstDot === -1) return western

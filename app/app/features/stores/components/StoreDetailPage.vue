@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { formatNumber } from '~/utils/formatNumber'
+import type { LocationMovementLite, StoreSlotLite } from '../utils/stockLocationDetailBundle'
 
 const props = defineProps<{
   storeId: string
@@ -10,8 +11,17 @@ const {
   isRefreshing,
   saving,
   entity,
+  slots,
+  selectedSlotId,
+  slotOptions,
+  transferFromSlotOptions,
+  slotModalOpen,
+  editingSlot,
+  slotForm,
   selectedProductId,
   ledger,
+  allIncoming,
+  allOutgoing,
   stats,
   listPath,
   transferOpen,
@@ -22,30 +32,52 @@ const {
   needsTransferDestination,
   transferStatusOptions,
   transferAvailableKg,
+  transferAvailableForForm,
   openTransfer,
+  openEditMovement,
+  deleteMovement,
+  editingMovementId,
   onTransferKindChange,
   cancelTransfer,
   saveTransfer,
+  openSlotCreate,
+  openSlotEdit,
+  saveSlot,
+  softDeleteSlot,
   setTransferQty
 } = useStoreDetail(() => props.storeId)
 
-const showProductCol = computed(() => !selectedProductId.value)
-const tableColspan = computed(() => (showProductCol.value ? 8 : 7))
-
 type MovementDir = 'in' | 'out'
-type StoreMovementRow = {
+
+type SlotMovementRow = {
   id: string
   dir: MovementDir
   date: string
   created_at: string
   party: string
-  product_name: string | null
   status_name: string | null
   quantity_kg: number
   qty_before: number
   qty_after: number
-  notes: string | null
+  raw: LocationMovementLite
 }
+
+type StoreMovementRow = SlotMovementRow & {
+  slot_name: string
+  slot_color: string | null
+}
+
+type GroupedWorkbookSlot = {
+  slot_id: string
+  slot_name: string
+  slot: StoreSlotLite | null
+  movements: SlotMovementRow[]
+  kg_in: number
+  kg_out: number
+  kg_remaining: number
+}
+
+const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
 
 const sortByDate = <T extends { date: string, created_at: string }>(rows: T[]) =>
   [...rows].sort((a, b) => {
@@ -54,7 +86,69 @@ const sortByDate = <T extends { date: string, created_at: string }>(rows: T[]) =
     return a.created_at.localeCompare(b.created_at)
   })
 
-const movements = computed((): StoreMovementRow[] =>
+function applyRunningBalances(
+  incoming: LocationMovementLite[],
+  outgoing: LocationMovementLite[]
+) {
+  type Event = { id: string, date: string, created_at: string, delta: number }
+
+  const events: Event[] = [
+    ...incoming.map(r => ({
+      id: r.id,
+      date: r.date,
+      created_at: r.created_at,
+      delta: Number(r.quantity_kg)
+    })),
+    ...outgoing.map(r => ({
+      id: r.id,
+      date: r.date,
+      created_at: r.created_at,
+      delta: -Number(r.quantity_kg)
+    }))
+  ]
+
+  events.sort((a, b) => {
+    const byDate = a.date.localeCompare(b.date)
+    if (byDate !== 0) return byDate
+    return a.created_at.localeCompare(b.created_at)
+  })
+
+  const balanceById = new Map<string, { qty_before: number, qty_after: number }>()
+  let balance = 0
+  for (const event of events) {
+    const qty_before = Number(balance.toFixed(4))
+    const qty_after = Number((balance + event.delta).toFixed(4))
+    balanceById.set(event.id, { qty_before, qty_after })
+    balance = qty_after
+  }
+
+  const withBalance = <T extends { id: string }>(rows: T[]) =>
+    rows.map((row) => {
+      const bal = balanceById.get(row.id) ?? { qty_before: 0, qty_after: 0 }
+      return { ...row, ...bal }
+    })
+
+  return {
+    incoming: withBalance(incoming) as Array<LocationMovementLite & { qty_before: number, qty_after: number }>,
+    outgoing: withBalance(outgoing) as Array<LocationMovementLite & { qty_before: number, qty_after: number }>
+  }
+}
+
+const productIncoming = computed(() => {
+  const pid = selectedProductId.value
+  let rows = allIncoming.value
+  if (pid) rows = rows.filter(r => r.product_id === pid)
+  return rows
+})
+
+const productOutgoing = computed(() => {
+  const pid = selectedProductId.value
+  let rows = allOutgoing.value
+  if (pid) rows = rows.filter(r => r.product_id === pid)
+  return rows
+})
+
+const storeMovements = computed((): StoreMovementRow[] =>
   sortByDate([
     ...ledger.value.incoming.map(row => ({
       id: `in-${row.id}`,
@@ -62,12 +156,13 @@ const movements = computed((): StoreMovementRow[] =>
       date: row.date,
       created_at: row.created_at,
       party: row.counterparty,
-      product_name: row.product_name,
-      status_name: row.status_name,
+      status_name: row.status_name ?? null,
       quantity_kg: row.quantity_kg,
       qty_before: row.qty_before,
       qty_after: row.qty_after,
-      notes: row.notes
+      slot_name: row.slot_name || '—',
+      slot_color: row.slot_color ?? null,
+      raw: row
     })),
     ...ledger.value.outgoing.map(row => ({
       id: `out-${row.id}`,
@@ -75,110 +170,229 @@ const movements = computed((): StoreMovementRow[] =>
       date: row.date,
       created_at: row.created_at,
       party: row.counterparty,
-      product_name: row.product_name,
-      status_name: row.status_name,
+      status_name: row.status_name ?? null,
       quantity_kg: row.quantity_kg,
       qty_before: row.qty_before,
       qty_after: row.qty_after,
-      notes: row.notes
+      slot_name: row.slot_name || '—',
+      slot_color: row.slot_color ?? null,
+      raw: row
     }))
   ])
 )
 
-const statsCardUi = { body: 'p-2 sm:p-2.5' }
-const cellInputUi = { base: 'px-1.5 py-1.5 text-sm rounded-sm tabular-nums' }
-const tableClass = 'w-max min-w-full border-collapse text-sm text-center whitespace-nowrap tabular-nums'
-const tablePanelClass = 'flex w-max min-w-full flex-col rounded-lg border border-default'
-const cellNowrapClass = 'p-2 whitespace-nowrap'
+const groupedWorkbookSlots = computed((): GroupedWorkbookSlot[] => {
+  const slotFilter = selectedSlotId.value
+  const visibleSlots = slots.value.filter(
+    s => slotFilter === 'all' || s.id === slotFilter
+  )
+
+  return visibleSlots.map((slot) => {
+    const incoming = productIncoming.value.filter(r => r.slot_id === slot.id)
+    const outgoing = productOutgoing.value.filter(r => r.slot_id === slot.id)
+    const balanced = applyRunningBalances(incoming, outgoing)
+    const movements = sortByDate([
+      ...balanced.incoming.map(row => ({
+        id: `in-${row.id}`,
+        dir: 'in' as const,
+        date: row.date,
+        created_at: row.created_at,
+        party: row.counterparty,
+        status_name: row.status_name ?? null,
+        quantity_kg: row.quantity_kg,
+        qty_before: row.qty_before,
+        qty_after: row.qty_after,
+        raw: row
+      })),
+      ...balanced.outgoing.map(row => ({
+        id: `out-${row.id}`,
+        dir: 'out' as const,
+        date: row.date,
+        created_at: row.created_at,
+        party: row.counterparty,
+        status_name: row.status_name ?? null,
+        quantity_kg: row.quantity_kg,
+        qty_before: row.qty_before,
+        qty_after: row.qty_after,
+        raw: row
+      }))
+    ])
+    const kg_in = movements.filter(m => m.dir === 'in').reduce((s, r) => s + Number(r.quantity_kg || 0), 0)
+    const kg_out = movements.filter(m => m.dir === 'out').reduce((s, r) => s + Number(r.quantity_kg || 0), 0)
+    return {
+      slot_id: slot.id,
+      slot_name: slot.name,
+      slot,
+      movements,
+      kg_in,
+      kg_out,
+      kg_remaining: kg_in - kg_out
+    }
+  })
+})
+
+const storeStats = computed(() => {
+  const kgIn = stats.value.kgIn
+  const kgOut = stats.value.kgOut
+  const kgRemaining = stats.value.kgRemaining
+  const wasteRatio = kgIn > 0.001 ? kgRemaining / kgIn : 0
+  return {
+    slotsCount: slots.value.length,
+    kgIn,
+    kgOut,
+    kgRemaining,
+    wasteRatio
+  }
+})
+
+function movementCanEdit(toKind: string | null | undefined) {
+  return toKind === 'sale' || toKind === 'mekla' || toKind === 'store_slot'
+}
+
+const workbookMovements = computed(() =>
+  storeMovements.value.map(row => ({
+    id: row.id,
+    dir: row.dir,
+    date: row.date,
+    party: row.party,
+    status_name: row.status_name,
+    quantity_kg: row.quantity_kg,
+    qty_before: row.qty_before,
+    qty_after: row.qty_after,
+    section_name: row.slot_name,
+    can_edit: row.dir === 'out' ? movementCanEdit(row.raw?.to_kind) : undefined
+  }))
+)
+
+const workbookSections = computed(() =>
+  groupedWorkbookSlots.value.map(group => ({
+    key: group.slot_id,
+    section_name: group.slot_name,
+    status_name: null,
+    product_name: null,
+    kg_in: group.kg_in,
+    kg_out: group.kg_out,
+    kg_remaining: group.kg_remaining,
+    movements: group.movements.map(row => ({
+      id: row.id,
+      dir: row.dir,
+      date: row.date,
+      party: row.party,
+      status_name: row.status_name,
+      quantity_kg: row.quantity_kg,
+      qty_before: row.qty_before,
+      qty_after: row.qty_after,
+      can_edit: row.dir === 'out' ? movementCanEdit(row.raw?.to_kind) : undefined
+    }))
+  }))
+)
+
+function openEditSlotByIndex(sectionIndex: number) {
+  const group = groupedWorkbookSlots.value[sectionIndex]
+  if (!group?.slot) return
+  openSlotEdit(group.slot)
+}
+
+async function deleteSlotByIndex(sectionIndex: number) {
+  const group = groupedWorkbookSlots.value[sectionIndex]
+  if (!group?.slot) return
+  await softDeleteSlot(group.slot)
+}
+
+function openEditMovementFromSheet(
+  scope: 'total' | 'section',
+  dataIndex: number,
+  sectionIndex?: number
+) {
+  if (scope === 'total') {
+    const row = storeMovements.value[dataIndex]
+    if (!row || row.dir !== 'out') return
+    void openEditMovement(row.raw)
+    return
+  }
+  const group = groupedWorkbookSlots.value[sectionIndex ?? -1]
+  const row = group?.movements[dataIndex]
+  if (!row || row.dir !== 'out') return
+  void openEditMovement(row.raw)
+}
+
+async function deleteMovementFromSheet(
+  scope: 'total' | 'section',
+  dataIndex: number,
+  sectionIndex?: number
+) {
+  if (scope === 'total') {
+    const row = storeMovements.value[dataIndex]
+    if (!row || row.dir !== 'out') return
+    await deleteMovement(row.raw)
+    return
+  }
+  const group = groupedWorkbookSlots.value[sectionIndex ?? -1]
+  const row = group?.movements[dataIndex]
+  if (!row || row.dir !== 'out') return
+  await deleteMovement(row.raw)
+}
 </script>
 
 <template>
   <div class="space-y-4">
-    <div class="flex flex-nowrap items-center gap-2 sm:gap-3">
-      <div class="flex min-w-0 shrink items-center gap-2">
-        <UButton
-          :to="listPath"
-          variant="ghost"
-          color="neutral"
-          icon="i-lucide-arrow-right"
-          size="sm"
-          aria-label="رجوع"
-        />
-        <div class="min-w-0">
-          <div class="flex flex-wrap items-center gap-2">
-            <h2 class="truncate text-2xl font-semibold tracking-tight text-highlighted">
-              {{ entity?.name || 'المخزن' }}
-            </h2>
+    <div class="space-y-3">
+      <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div class="flex min-w-0 flex-1 items-center gap-2">
+          <UButton
+            :to="listPath"
+            variant="ghost"
+            color="neutral"
+            icon="i-lucide-arrow-right"
+            size="sm"
+            aria-label="رجوع"
+          />
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="truncate text-2xl font-semibold tracking-tight text-highlighted">
+                {{ entity?.name || 'المخزن' }}
+              </h2>
+            </div>
+            <p
+              v-if="entity?.notes"
+              class="mt-1 truncate text-sm text-muted"
+            >
+              {{ entity.notes }}
+            </p>
           </div>
-          <p
-            v-if="entity?.notes"
-            class="mt-1 truncate text-sm text-muted"
-          >
-            {{ entity.notes }}
-          </p>
         </div>
-      </div>
 
-      <div
-        v-if="!loading"
-        class="homos-scroll mx-auto flex min-w-0 flex-1 flex-nowrap items-stretch justify-center gap-1.5 overflow-x-auto tabular-nums"
-      >
-        <UCard
-          class="min-w-24 shrink-0 text-center"
-          :ui="statsCardUi"
-        >
-          <p class="text-xs font-medium text-muted">
-            وارد
-          </p>
-          <p
-            class="mt-0.5 text-base font-semibold tracking-tight text-highlighted"
-            dir="ltr"
+        <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <USelect
+            v-if="!loading && slotOptions.length > 1"
+            v-model="selectedSlotId"
+            :items="slotOptions"
+            value-key="value"
+            label-key="label"
+            class="w-52 shrink-0"
+            placeholder="الخانة"
+          />
+          <UButton
+            v-if="!loading"
+            icon="i-lucide-plus"
+            size="sm"
+            class="shrink-0"
+            @click="openSlotCreate"
           >
-            {{ formatNumber(stats.kgIn) }}
-          </p>
-        </UCard>
-        <UCard
-          class="min-w-24 shrink-0 text-center"
-          :ui="statsCardUi"
-        >
-          <p class="text-xs font-medium text-muted">
-            منصرف
-          </p>
-          <p
-            class="mt-0.5 text-base font-semibold tracking-tight text-highlighted"
-            dir="ltr"
+            إضافة خانة
+          </UButton>
+          <UButton
+            v-if="!loading"
+            icon="i-lucide-arrow-left-right"
+            size="sm"
+            color="primary"
+            class="shrink-0"
+            :disabled="!selectedProductId || stats.kgRemaining <= 0.001"
+            @click="openTransfer"
           >
-            {{ formatNumber(stats.kgOut) }}
-          </p>
-        </UCard>
-        <UCard
-          class="min-w-24 shrink-0 text-center"
-          :ui="statsCardUi"
-        >
-          <p class="text-xs font-medium text-muted">
-            الرصيد
-          </p>
-          <p
-            class="mt-0.5 text-base font-semibold tracking-tight text-highlighted"
-            dir="ltr"
-          >
-            {{ formatNumber(stats.kgRemaining) }}
-          </p>
-        </UCard>
-      </div>
-
-      <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2">
-        <UButton
-          v-if="!loading"
-          icon="i-lucide-arrow-left-right"
-          size="sm"
-          color="primary"
-          class="shrink-0"
-          :disabled="!selectedProductId || stats.kgRemaining <= 0.001"
-          @click="openTransfer"
-        >
-          تحويل
-        </UButton>
+            تحويل من المخزن
+          </UButton>
+        </div>
       </div>
     </div>
 
@@ -186,19 +400,27 @@ const cellNowrapClass = 'p-2 whitespace-nowrap'
       v-if="transferOpen"
       class="homos-scroll w-full overflow-x-auto rounded-lg border border-primary/40 bg-primary/5"
     >
+      <div class="border-b border-primary/20 px-3 py-2 text-sm font-medium text-highlighted">
+        {{ editingMovementId ? 'تعديل تحويل' : 'تحويل جديد' }}
+      </div>
       <div class="flex w-max min-w-full items-end gap-2 p-3">
-        <div class="min-w-40 shrink-0">
+        <div class="w-40 shrink-0">
           <p class="mb-1 text-xs text-muted">
-            المصدر
+            الخانة المصدر
           </p>
-          <p class="text-sm font-medium text-highlighted whitespace-nowrap">
-            {{ entity?.name || 'المخزن' }}
-            <span
-              class="ms-1 font-normal text-muted"
-              dir="ltr"
-            >
-              ({{ formatNumber(transferAvailableKg) }} كجم)
-            </span>
+          <USelect
+            v-model="transferForm.from_slot_id"
+            :items="transferFromSlotOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+            placeholder="اختر الخانة"
+          />
+          <p
+            class="mt-1 text-xs text-muted"
+            dir="ltr"
+          >
+            ({{ formatNumber(transferAvailableForForm) }} كجم)
           </p>
         </div>
         <div class="w-36 shrink-0">
@@ -278,16 +500,6 @@ const cellNowrapClass = 'p-2 whitespace-nowrap'
             @update:model-value="setTransferQty"
           />
         </div>
-        <div class="w-44 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            ملاحظات
-          </p>
-          <UInput
-            v-model="transferForm.notes"
-            class="w-full"
-            :ui="cellInputUi"
-          />
-        </div>
         <div class="flex shrink-0 items-center gap-1 pb-0.5">
           <UButton
             size="sm"
@@ -310,7 +522,7 @@ const cellNowrapClass = 'p-2 whitespace-nowrap'
     </div>
 
     <div v-if="loading">
-      <TableSkeleton :cols="6" />
+      <CardsSkeleton :count="2" />
     </div>
 
     <div
@@ -320,137 +532,108 @@ const cellNowrapClass = 'p-2 whitespace-nowrap'
       المخزن غير موجود
     </div>
 
-    <div
-      v-else
-      class="relative transition-opacity duration-200"
-      :class="isRefreshing ? 'opacity-50 pointer-events-none' : 'opacity-100'"
-      :aria-busy="isRefreshing"
-    >
+    <template v-else>
       <div
-        v-if="isRefreshing"
-        class="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
+        class="relative transition-opacity duration-200"
+        :class="isRefreshing ? 'opacity-50 pointer-events-none' : 'opacity-100'"
+        :aria-busy="isRefreshing"
       >
-        <div class="flex items-center gap-2 rounded-full border border-default bg-default/90 px-3 py-1.5 text-sm text-muted shadow-sm backdrop-blur-sm">
-          <UIcon
-            name="i-lucide-loader-circle"
-            class="size-4 animate-spin text-primary"
-          />
-          تحديث البيانات…
-        </div>
-      </div>
-
-      <div class="homos-scroll overflow-x-auto">
-        <div :class="tablePanelClass">
-          <div class="flex shrink-0 items-center gap-2 border-b border-default bg-elevated/70 px-3 py-2">
-            <p class="text-sm font-semibold text-highlighted">
-              الحركة علي المخزن
-            </p>
-            <UBadge
-              size="sm"
-              variant="subtle"
-              color="neutral"
-            >
-              {{ movements.length }}
-            </UBadge>
+        <div
+          v-if="isRefreshing"
+          class="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
+        >
+          <div class="flex items-center gap-2 rounded-full border border-default bg-default/90 px-3 py-1.5 text-sm text-muted shadow-sm backdrop-blur-sm">
+            <UIcon
+              name="i-lucide-loader-circle"
+              class="size-4 animate-spin text-primary"
+            />
+            تحديث البيانات…
           </div>
-          <table
-            dir="rtl"
-            :class="tableClass"
-          >
-            <thead class="bg-elevated text-muted">
-              <tr>
-                <th :class="cellNowrapClass + ' font-medium'" />
-                <th :class="cellNowrapClass + ' font-medium'">
-                  التاريخ
-                </th>
-                <th :class="cellNowrapClass + ' font-medium text-start'">
-                  الطرف
-                </th>
-                <th
-                  v-if="showProductCol"
-                  :class="cellNowrapClass + ' font-medium text-start'"
-                >
-                  الصنف
-                </th>
-                <th :class="cellNowrapClass + ' font-medium text-start'">
-                  الحالة
-                </th>
-                <th :class="cellNowrapClass + ' font-medium'">
-                  قبل
-                </th>
-                <th :class="cellNowrapClass + ' font-medium'">
-                  كجم
-                </th>
-                <th :class="cellNowrapClass + ' font-medium'">
-                  بعد
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in movements"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td :class="cellNowrapClass">
-                  <UIcon
-                    :name="row.dir === 'in' ? 'i-lucide-arrow-down-left' : 'i-lucide-arrow-up-right'"
-                    :class="row.dir === 'in' ? 'size-4 text-success' : 'size-4 text-primary'"
-                  />
-                </td>
-                <td
-                  :class="cellNowrapClass"
-                  dir="ltr"
-                >
-                  {{ row.date }}
-                </td>
-                <td :class="cellNowrapClass + ' text-start'">
-                  {{ row.party }}
-                </td>
-                <td
-                  v-if="showProductCol"
-                  :class="cellNowrapClass + ' text-start'"
-                >
-                  {{ row.product_name || '—' }}
-                </td>
-                <td :class="cellNowrapClass + ' text-start'">
-                  {{ row.status_name || '—' }}
-                </td>
-                <td
-                  :class="cellNowrapClass + ' text-muted'"
-                  dir="ltr"
-                >
-                  {{ formatNumber(row.qty_before) }}
-                </td>
-                <td
-                  :class="[
-                    cellNowrapClass,
-                    'font-medium',
-                    row.dir === 'in' ? 'text-success' : 'text-primary'
-                  ]"
-                  dir="ltr"
-                >
-                  {{ formatNumber(row.quantity_kg) }}
-                </td>
-                <td
-                  :class="cellNowrapClass + ' font-medium text-highlighted'"
-                  dir="ltr"
-                >
-                  {{ formatNumber(row.qty_after) }}
-                </td>
-              </tr>
-              <tr v-if="!movements.length">
-                <td
-                  :colspan="tableColspan"
-                  class="p-4 text-center text-muted"
-                >
-                  لا توجد حركات
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        </div>
+
+        <div class="flex h-[calc(100dvh-14rem)] w-full min-h-[24rem] min-h-0 flex-col overflow-hidden">
+          <ClientOnly>
+            <StoreDetailWorkbook
+              :key="storeId"
+              class="min-h-0 flex-1"
+              :store-id="storeId"
+              :stats="storeStats"
+              :movements="workbookMovements"
+              :sections="workbookSections"
+              :open-edit-section="openEditSlotByIndex"
+              :delete-section="deleteSlotByIndex"
+              :open-edit-movement="openEditMovementFromSheet"
+              :delete-movement="deleteMovementFromSheet"
+            />
+            <template #fallback>
+              <CardsSkeleton :count="1" />
+            </template>
+          </ClientOnly>
         </div>
       </div>
-    </div>
+    </template>
+
+    <UModal
+      v-model:open="slotModalOpen"
+      :title="editingSlot ? 'تعديل خانة' : 'إضافة خانة'"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <UFormField
+            label="الاسم"
+            required
+          >
+            <UInput
+              v-model="slotForm.name"
+              class="w-full"
+              placeholder="مثال: رئيسي / A1"
+            />
+          </UFormField>
+          <UFormField label="اللون">
+            <div class="flex items-center gap-3">
+              <input
+                v-model="slotForm.color"
+                type="color"
+                class="size-10 cursor-pointer rounded-md border border-default bg-transparent p-1"
+              >
+              <UInput
+                v-model="slotForm.color"
+                class="w-full font-mono uppercase"
+                dir="ltr"
+                maxlength="7"
+              />
+            </div>
+          </UFormField>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full items-center justify-between gap-2">
+          <UButton
+            v-if="editingSlot"
+            color="error"
+            variant="outline"
+            :loading="saving"
+            @click="softDeleteSlot(editingSlot)"
+          >
+            حذف
+          </UButton>
+          <div class="ms-auto flex gap-2">
+            <UButton
+              color="neutral"
+              variant="outline"
+              @click="slotModalOpen = false"
+            >
+              إلغاء
+            </UButton>
+            <UButton
+              :loading="saving"
+              @click="saveSlot"
+            >
+              حفظ
+            </UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

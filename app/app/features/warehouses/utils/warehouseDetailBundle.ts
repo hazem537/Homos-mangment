@@ -14,7 +14,7 @@ export type SectionIncomingRow = {
   quantity_kg: number
   qty_before: number
   qty_after: number
-  notes: string | null
+  status_name: string | null
   kind: 'delivery' | 'movement'
   product_id?: string
   status_id?: string | null
@@ -33,7 +33,6 @@ export type SectionOutgoingRow = {
   quantity_kg: number
   qty_before: number
   qty_after: number
-  notes: string | null
   product_id: string
   status_id: string | null
   to_status_id?: string | null
@@ -51,7 +50,6 @@ export type SectionCard = SectionBalance & {
 export type WarehouseSectionLite = {
   id: string
   name: string
-  notes: string | null
   is_active: boolean
 }
 
@@ -65,7 +63,6 @@ export type WarehouseDeliveryLite = {
   delivery_date: string
   created_at: string | null
   quantity_kg: number
-  notes: string | null
   supplier_name: string
 }
 
@@ -78,7 +75,6 @@ export type WarehouseMovementOutLite = {
   movement_date: string
   created_at: string | null
   quantity_kg: number
-  notes: string | null
   from_kind: StockLocationKind
   to_kind: StockLocationKind
   to_id: string
@@ -95,7 +91,6 @@ export type WarehouseMovementInLite = {
   movement_date: string
   created_at: string | null
   quantity_kg: number
-  notes: string | null
   from_kind: StockLocationKind
   from_id: string
   to_kind: StockLocationKind
@@ -103,6 +98,8 @@ export type WarehouseMovementInLite = {
 }
 
 export type WarehouseRow = Database['public']['Tables']['warehouses']['Row']
+
+export type WarehouseExpense = Database['public']['Tables']['warehouse_expenses']['Row']
 
 export type WarehouseDetailBundle = {
   warehouse: WarehouseRow | null
@@ -113,6 +110,7 @@ export type WarehouseDetailBundle = {
   deliveries: WarehouseDeliveryLite[]
   movements_out: WarehouseMovementOutLite[]
   movements_in: WarehouseMovementInLite[]
+  expenses: WarehouseExpense[]
 }
 
 function asArray<T>(value: unknown): T[] {
@@ -128,7 +126,8 @@ function emptyBundle(): WarehouseDetailBundle {
     balances: [],
     deliveries: [],
     movements_out: [],
-    movements_in: []
+    movements_in: [],
+    expenses: []
   }
 }
 
@@ -145,7 +144,7 @@ export function applySectionRunningBalances(
   outgoing: Omit<SectionOutgoingRow, 'qty_before' | 'qty_after'>[]
 ) {
   type Event = {
-    id: string
+    key: string
     date: string
     created_at: string
     delta: number
@@ -153,13 +152,13 @@ export function applySectionRunningBalances(
 
   const events: Event[] = [
     ...incoming.map(r => ({
-      id: r.id,
+      key: `in:${r.id}`,
       date: r.date,
       created_at: r.created_at,
       delta: Number(r.quantity_kg)
     })),
     ...outgoing.map(r => ({
-      id: r.id,
+      key: `out:${r.id}`,
       date: r.date,
       created_at: r.created_at,
       delta: -Number(r.quantity_kg)
@@ -172,26 +171,27 @@ export function applySectionRunningBalances(
     return a.created_at.localeCompare(b.created_at)
   })
 
-  const balanceById = new Map<string, { qty_before: number, qty_after: number }>()
+  const balanceByKey = new Map<string, { qty_before: number, qty_after: number }>()
   let balance = 0
   for (const event of events) {
     const qty_before = Number(balance.toFixed(4))
     const qty_after = Number((balance + event.delta).toFixed(4))
-    balanceById.set(event.id, { qty_before, qty_after })
+    balanceByKey.set(event.key, { qty_before, qty_after })
     balance = qty_after
   }
 
   const withBalance = <T extends { id: string }>(
-    rows: T[]
+    rows: T[],
+    dir: 'in' | 'out'
   ): Array<T & { qty_before: number, qty_after: number }> =>
     rows.map((row) => {
-      const bal = balanceById.get(row.id) ?? { qty_before: 0, qty_after: 0 }
+      const bal = balanceByKey.get(`${dir}:${row.id}`) ?? { qty_before: 0, qty_after: 0 }
       return { ...row, ...bal }
     })
 
   return {
-    incoming: withBalance(incoming) as SectionIncomingRow[],
-    outgoing: withBalance(outgoing) as SectionOutgoingRow[]
+    incoming: withBalance(incoming, 'in') as SectionIncomingRow[],
+    outgoing: withBalance(outgoing, 'out') as SectionOutgoingRow[]
   }
 }
 
@@ -208,10 +208,16 @@ export function buildSectionCards(bundle: WarehouseDetailBundle): SectionCard[] 
     outgoingBySection.set(key, [])
   }
 
+  const statusNameByKey = new Map(
+    balances.map(b => [
+      sectionProductKey(b.section_id, b.product_id, b.status_id),
+      b.status_name ?? null
+    ])
+  )
+
   for (const d of bundle.deliveries) {
-    const list = incomingBySection.get(
-      sectionProductKey(d.section_id, d.product_id, d.status_id)
-    )
+    const key = sectionProductKey(d.section_id, d.product_id, d.status_id)
+    const list = incomingBySection.get(key)
     if (!list) continue
     list.push({
       id: d.id,
@@ -221,8 +227,10 @@ export function buildSectionCards(bundle: WarehouseDetailBundle): SectionCard[] 
       quantity_kg: Number(d.quantity_kg),
       qty_before: 0,
       qty_after: 0,
-      notes: d.notes,
-      kind: 'delivery'
+      status_name: statusNameByKey.get(key) ?? null,
+      kind: 'delivery',
+      product_id: d.product_id,
+      status_id: d.status_id
     })
   }
 
@@ -240,7 +248,6 @@ export function buildSectionCards(bundle: WarehouseDetailBundle): SectionCard[] 
       quantity_kg: Number(m.quantity_kg),
       qty_before: 0,
       qty_after: 0,
-      notes: m.notes,
       product_id: m.product_id,
       status_id: m.status_id,
       to_status_id: m.to_status_id ?? m.status_id,
@@ -252,9 +259,8 @@ export function buildSectionCards(bundle: WarehouseDetailBundle): SectionCard[] 
   }
 
   for (const m of bundle.movements_in) {
-    const list = incomingBySection.get(
-      sectionProductKey(m.to_id, m.product_id, m.status_id)
-    )
+    const key = sectionProductKey(m.to_id, m.product_id, m.status_id)
+    const list = incomingBySection.get(key)
     if (!list) continue
     list.push({
       id: m.id,
@@ -264,7 +270,7 @@ export function buildSectionCards(bundle: WarehouseDetailBundle): SectionCard[] 
       quantity_kg: Number(m.quantity_kg),
       qty_before: 0,
       qty_after: 0,
-      notes: m.notes,
+      status_name: statusNameByKey.get(key) ?? null,
       kind: 'movement',
       product_id: m.product_id,
       status_id: m.status_id,
@@ -328,7 +334,8 @@ export function mapWarehouseDetailBundle(raw: unknown): WarehouseDetailBundle {
     balances: asArray<SectionBalance>(data.balances),
     deliveries: asArray<WarehouseDeliveryLite>(data.deliveries),
     movements_out: asArray<WarehouseMovementOutLite>(data.movements_out),
-    movements_in: asArray<WarehouseMovementInLite>(data.movements_in)
+    movements_in: asArray<WarehouseMovementInLite>(data.movements_in),
+    expenses: asArray<WarehouseExpense>(data.expenses)
   }
 }
 

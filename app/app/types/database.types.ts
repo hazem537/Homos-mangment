@@ -7,9 +7,17 @@ export type Json =
   | Json[]
 
 export type AppRole = 'admin' | 'accountant' | 'warehouse'
-export type TransferKind = 'transfer' | 'settlement' | 'other' | 'commission'
+export type TransferKind = 'transfer' | 'commission'
 export type DeliveryCostKind = 'nolon' | 'nathriyat'
-export type StockLocationKind = 'section' | 'store' | 'mekla' | 'client' | 'waste' | 'sale'
+export type DeliveryCostPayer = 'company' | 'supplier'
+export type StockLocationKind =
+  | 'section'
+  | 'store'
+  | 'store_slot'
+  | 'mekla'
+  | 'client'
+  | 'waste'
+  | 'sale'
 
 export type Database = {
   public: {
@@ -37,6 +45,30 @@ export type Database = {
           full_name?: string | null
           role?: AppRole
           created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      table_view_prefs: {
+        Row: {
+          id: string
+          user_id: string
+          table_key: string
+          workbook_styles: Json
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          table_key: string
+          workbook_styles?: Json
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          table_key?: string
+          workbook_styles?: Json
           updated_at?: string
         }
         Relationships: []
@@ -75,30 +107,33 @@ export type Database = {
         Row: {
           id: string
           name: string
-          notes: string | null
+          color: string | null
           is_active: boolean
           account_type_id: string
           product_id: string
+          ardab_factor: number
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
           name: string
-          notes?: string | null
+          color?: string | null
           is_active?: boolean
           account_type_id: string
           product_id: string
+          ardab_factor?: number
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
           name?: string
-          notes?: string | null
+          color?: string | null
           is_active?: boolean
           account_type_id?: string
           product_id?: string
+          ardab_factor?: number
           created_at?: string
           updated_at?: string
         }
@@ -331,7 +366,6 @@ export type Database = {
           transfer_date: string
           amount: number
           kind: TransferKind
-          notes: string | null
           is_cancelled: boolean
           created_at: string
           updated_at: string
@@ -344,7 +378,6 @@ export type Database = {
           transfer_date?: string
           amount: number
           kind?: TransferKind
-          notes?: string | null
           is_cancelled?: boolean
           created_at?: string
           updated_at?: string
@@ -357,7 +390,6 @@ export type Database = {
           transfer_date?: string
           amount?: number
           kind?: TransferKind
-          notes?: string | null
           is_cancelled?: boolean
           created_at?: string
           updated_at?: string
@@ -386,40 +418,47 @@ export type Database = {
           }
         ]
       }
-      season_costs: {
+      warehouse_expenses: {
         Row: {
           id: string
+          warehouse_id: string
           season_id: string
-          cost_date: string
+          payment_date: string
           title: string
           amount: number
-          notes: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
+          warehouse_id: string
           season_id: string
-          cost_date?: string
+          payment_date?: string
           title: string
           amount: number
-          notes?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
+          warehouse_id?: string
           season_id?: string
-          cost_date?: string
+          payment_date?: string
           title?: string
           amount?: number
-          notes?: string | null
           created_at?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: 'season_costs_season_id_fkey'
+            foreignKeyName: 'warehouse_expenses_warehouse_id_fkey'
+            columns: ['warehouse_id']
+            isOneToOne: false
+            referencedRelation: 'warehouses'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'warehouse_expenses_season_id_fkey'
             columns: ['season_id']
             isOneToOne: false
             referencedRelation: 'seasons'
@@ -432,7 +471,6 @@ export type Database = {
           id: string
           warehouse_id: string
           name: string
-          notes: string | null
           is_active: boolean
           created_at: string
           updated_at: string
@@ -441,7 +479,6 @@ export type Database = {
           id?: string
           warehouse_id: string
           name: string
-          notes?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -450,7 +487,6 @@ export type Database = {
           id?: string
           warehouse_id?: string
           name?: string
-          notes?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -461,6 +497,44 @@ export type Database = {
             columns: ['warehouse_id']
             isOneToOne: false
             referencedRelation: 'warehouses'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      store_slots: {
+        Row: {
+          id: string
+          store_id: string
+          name: string
+          color: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          store_id: string
+          name: string
+          color?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          store_id?: string
+          name?: string
+          color?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'store_slots_store_id_fkey'
+            columns: ['store_id']
+            isOneToOne: false
+            referencedRelation: 'stores'
             referencedColumns: ['id']
           }
         ]
@@ -559,7 +633,6 @@ export type Database = {
           from_id: string
           to_kind: StockLocationKind
           to_id: string
-          notes: string | null
           is_cancelled: boolean
           created_at: string
           updated_at: string
@@ -576,7 +649,6 @@ export type Database = {
           from_id: string
           to_kind: StockLocationKind
           to_id: string
-          notes?: string | null
           is_cancelled?: boolean
           created_at?: string
           updated_at?: string
@@ -593,7 +665,6 @@ export type Database = {
           from_id?: string
           to_kind?: StockLocationKind
           to_id?: string
-          notes?: string | null
           is_cancelled?: boolean
           created_at?: string
           updated_at?: string
@@ -637,6 +708,7 @@ export type Database = {
           warehouse_id: string | null
           section_id: string | null
           store_id: string | null
+          store_slot_id: string | null
           supplier_id: string
           product_id: string
           status_id: string
@@ -645,8 +717,6 @@ export type Database = {
           ardab: number
           nolon_total: number
           nathriyat_total: number
-          vehicle_number: string | null
-          notes: string | null
           is_cancelled: boolean
           created_at: string
           updated_at: string
@@ -658,6 +728,7 @@ export type Database = {
           warehouse_id?: string | null
           section_id?: string | null
           store_id?: string | null
+          store_slot_id?: string | null
           supplier_id: string
           product_id: string
           status_id: string
@@ -666,8 +737,6 @@ export type Database = {
           ardab: number
           nolon_total?: number
           nathriyat_total?: number
-          vehicle_number?: string | null
-          notes?: string | null
           is_cancelled?: boolean
           created_at?: string
           updated_at?: string
@@ -679,6 +748,7 @@ export type Database = {
           warehouse_id?: string | null
           section_id?: string | null
           store_id?: string | null
+          store_slot_id?: string | null
           supplier_id?: string
           product_id?: string
           status_id?: string
@@ -687,8 +757,6 @@ export type Database = {
           ardab?: number
           nolon_total?: number
           nathriyat_total?: number
-          vehicle_number?: string | null
-          notes?: string | null
           is_cancelled?: boolean
           created_at?: string
           updated_at?: string
@@ -723,6 +791,13 @@ export type Database = {
             referencedColumns: ['id']
           },
           {
+            foreignKeyName: 'warehouse_deliveries_store_slot_id_fkey'
+            columns: ['store_slot_id']
+            isOneToOne: false
+            referencedRelation: 'store_slots'
+            referencedColumns: ['id']
+          },
+          {
             foreignKeyName: 'warehouse_deliveries_supplier_id_fkey'
             columns: ['supplier_id']
             isOneToOne: false
@@ -750,6 +825,7 @@ export type Database = {
           id: string
           delivery_id: string
           kind: DeliveryCostKind
+          payer: DeliveryCostPayer
           amount: number
           payment_date: string
           notes: string | null
@@ -761,6 +837,7 @@ export type Database = {
           id?: string
           delivery_id: string
           kind: DeliveryCostKind
+          payer?: DeliveryCostPayer
           amount: number
           payment_date?: string
           notes?: string | null
@@ -772,6 +849,7 @@ export type Database = {
           id?: string
           delivery_id?: string
           kind?: DeliveryCostKind
+          payer?: DeliveryCostPayer
           amount?: number
           payment_date?: string
           notes?: string | null
@@ -882,7 +960,6 @@ export type Database = {
           product_name: string | null
           status_id: string | null
           status_name: string | null
-          notes: string | null
           is_active: boolean
           kg_in: number
           kg_out: number
@@ -903,6 +980,22 @@ export type Database = {
           p_season_id?: string | null
         }
         Returns: Json
+      }
+      store_slot_balances: {
+        Args: {
+          p_store_id: string
+          p_season_id?: string | null
+        }
+        Returns: {
+          slot_id: string
+          slot_name: string
+          slot_color: string | null
+          product_id: string | null
+          product_name: string | null
+          status_id: string | null
+          status_name: string | null
+          kg_total: number
+        }[]
       }
       store_balances: {
         Args: {
@@ -955,7 +1048,7 @@ export type Database = {
           supplier_name: string
           product_id: string | null
           product_name: string | null
-          notes: string | null
+          color: string | null
           is_active: boolean
           account_type_id: string
           account_type_name: string
@@ -963,6 +1056,7 @@ export type Database = {
           transfers_total: number
           commission_total: number
           balance: number
+          ardab_factor: number
           ardab_total: number
           ardab_delivered: number
           ardab_remaining: number
@@ -1010,6 +1104,7 @@ export type Database = {
       app_role: AppRole
       transfer_kind: TransferKind
       delivery_cost_kind: DeliveryCostKind
+      delivery_cost_payer: DeliveryCostPayer
       stock_location_kind: StockLocationKind
     }
     CompositeTypes: {

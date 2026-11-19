@@ -16,6 +16,7 @@ export type SupplierStatsRow = {
   money_paid: number
   money_due: number
   commission_total: number
+  warehouse_costs_total: number
   avg_price_per_ardab: number
   nolon_total: number
   nathriyat_total: number
@@ -46,13 +47,22 @@ function emptyBundle(): SupplierStatsBundle {
   return { by_type: [], by_supplier: [] }
 }
 
+function withWarehouseCosts<T extends SupplierStatsRow>(row: T): T {
+  return {
+    ...row,
+    warehouse_costs_total: Number(row.warehouse_costs_total ?? 0)
+  }
+}
+
 export function mapSupplierStatsBundle(raw: unknown): SupplierStatsBundle {
   if (!raw || typeof raw !== 'object') return emptyBundle()
   const data = raw as Record<string, unknown>
   if (typeof data.error === 'string') throw new Error(data.error)
   return {
-    by_type: asArray<SupplierStatsRow>(data.by_type),
-    by_supplier: asArray<SupplierDetailRow>(data.by_supplier)
+    by_type: asArray<SupplierStatsRow>(data.by_type).map(withWarehouseCosts),
+    by_supplier: asArray<SupplierDetailRow>(data.by_supplier).map(row =>
+      withWarehouseCosts({ ...row, warehouse_costs_total: 0 })
+    )
   }
 }
 

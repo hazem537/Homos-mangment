@@ -94,14 +94,14 @@ const balanceColor = computed(() => {
       <UInput
         v-model="search"
         icon="i-lucide-search"
-        placeholder="بحث بالمورد أو الصنف أو البيان..."
+        placeholder="بحث بالمورد أو الصنف..."
         class="max-w-md"
       />
     </div>
 
     <UCard :ui="{ body: 'p-0' }">
       <div v-if="loading">
-        <TableSkeleton :cols="7" />
+        <TableSkeleton :cols="6" />
       </div>
       <div v-else-if="!activeSeason" class="p-6 text-center text-muted">
         لا يوجد موسم نشط — من شاشة المواسم فعّل موسماً أولاً.
@@ -112,9 +112,6 @@ const balanceColor = computed(() => {
             <tr>
               <th class="p-3 font-medium w-28">
                 إجراءات
-              </th>
-              <th class="p-3 font-medium">
-                البيان
               </th>
               <th class="p-3 font-medium">
                 المبلغ
@@ -157,15 +154,12 @@ const balanceColor = computed(() => {
                   />
                 </div>
               </td>
-              <td class="max-w-[16rem] p-3 text-start text-muted whitespace-normal break-words">
-                {{ row.notes || '—' }}
-              </td>
               <td class="p-3" dir="ltr">
                 {{ formatMoney(row.amount) }}
               </td>
               <td class="p-3">
                 <UBadge
-                  :color="row.kind === 'settlement' ? 'warning' : row.kind === 'commission' ? 'success' : 'primary'"
+                  :color="row.kind === 'commission' ? 'success' : 'primary'"
                   variant="subtle"
                 >
                   {{ transferKindLabel(row.kind) }}
@@ -182,7 +176,7 @@ const balanceColor = computed(() => {
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="7" class="p-6 text-center text-muted">
+              <td colspan="6" class="p-6 text-center text-muted">
                 لا توجد تحويلات في هذا الموسم بعد
               </td>
             </tr>
@@ -248,9 +242,6 @@ const balanceColor = computed(() => {
               suffix="جنيه"
               @update:model-value="setDecimalField('amount', $event)"
             />
-          </UFormField>
-          <UFormField :label="form.kind === 'settlement' ? 'البيان (إلزامي للتسوية)' : 'البيان'" :required="form.kind === 'settlement'">
-            <UTextarea v-model="form.notes" class="w-full" :rows="3" />
           </UFormField>
         </div>
       </template>

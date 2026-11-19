@@ -210,8 +210,18 @@ export function useWarehouses() {
       if (secErr) throw secErr
       const sectionIds = (sections ?? []).map(s => s.id)
       if (sectionIds.length) {
-        await client.from('stock_movements').delete().eq('from_kind', 'section').in('from_id', sectionIds)
-        await client.from('stock_movements').delete().eq('to_kind', 'section').in('to_id', sectionIds)
+        const { error: fromErr } = await client
+          .from('stock_movements')
+          .delete()
+          .eq('from_kind', 'section')
+          .in('from_id', sectionIds)
+        if (fromErr) throw fromErr
+        const { error: toErr } = await client
+          .from('stock_movements')
+          .delete()
+          .eq('to_kind', 'section')
+          .in('to_id', sectionIds)
+        if (toErr) throw toErr
       }
       const { error } = await client.from('warehouses').delete().eq('id', row.warehouse_id)
       if (error) throw error

@@ -5,6 +5,73 @@
   --font-sans: "IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif;
 }
 
+/* Shared Handsontable workbook action buttons (supplier + warehouse) */
+.workbook-sheet td.wb-action-cell {
+  padding: 2px !important;
+  vertical-align: middle;
+  text-align: center !important;
+}
+
+.workbook-sheet .wb-action-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.workbook-sheet .wb-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--ui-border, #cbd5e1);
+  background: var(--ui-bg, #fff);
+  color: var(--ui-text, #334155);
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.workbook-sheet .wb-action-btn:hover:not(:disabled) {
+  background: var(--ui-bg-elevated, #f1f5f9);
+}
+
+.workbook-sheet .wb-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.workbook-sheet .wb-action-delete {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.workbook-sheet .wb-action-delete:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.workbook-sheet .wb-action-add {
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+
+.workbook-sheet .wb-action-add:hover:not(:disabled) {
+  background: #f0fdf4;
+}
+
+.workbook-sheet .wb-action-pay,
+.workbook-sheet .wb-action-edit {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.workbook-sheet .wb-action-pay:hover:not(:disabled),
+.workbook-sheet .wb-action-edit:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
 /*
  * Light-only surfaces: white page + soft stone cards.
  * Scoped with :not(.dark) so dark mode keeps Nuxt UI defaults.

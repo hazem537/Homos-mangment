@@ -179,8 +179,18 @@ export function useMeklas() {
     if (!ok) return
     saving.value = true
     try {
-      await client.from('stock_movements').delete().eq('from_kind', 'mekla').eq('from_id', row.mekla_id)
-      await client.from('stock_movements').delete().eq('to_kind', 'mekla').eq('to_id', row.mekla_id)
+      const { error: fromErr } = await client
+        .from('stock_movements')
+        .delete()
+        .eq('from_kind', 'mekla')
+        .eq('from_id', row.mekla_id)
+      if (fromErr) throw fromErr
+      const { error: toErr } = await client
+        .from('stock_movements')
+        .delete()
+        .eq('to_kind', 'mekla')
+        .eq('to_id', row.mekla_id)
+      if (toErr) throw toErr
       const { error } = await client.from('meklas').delete().eq('id', row.mekla_id)
       if (error) throw error
       toast.add({ title: 'تم حذف المقلى', color: 'success' })

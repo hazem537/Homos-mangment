@@ -17,13 +17,18 @@ const {
   deliveryMaxKgAllowed,
   onSupplierChange,
   onWarehouseChange,
+  selectedSupplierFactor,
   computedArdab,
   expandedDeliveryId,
   paymentModalOpen,
   paymentKind,
   paymentForm,
   paymentRemaining,
+  nolonPaidOf,
+  nolonSupplierPaidOf,
   nolonRestOf,
+  nathriyatPaidOf,
+  nathriyatSupplierPaidOf,
   nathriyatRestOf,
   paymentsOf,
   deliveryCostKindLabel,
@@ -153,16 +158,25 @@ const {
                 نولون
               </th>
               <th class="p-3 font-medium">
-                باقي نولون
+                مدفوع منا
+              </th>
+              <th class="p-3 font-medium">
+                نولون طرف المورد
+              </th>
+              <th class="p-3 font-medium">
+                الباقي
               </th>
               <th class="p-3 font-medium">
                 نثريات
               </th>
               <th class="p-3 font-medium">
-                باقي نثريات
+                مدفوع منا
               </th>
               <th class="p-3 font-medium">
-                رقم السيارة
+                نثريات طرف المورد
+              </th>
+              <th class="p-3 font-medium">
+                الباقي
               </th>
               <th class="p-3 font-medium w-40">
                 إجراءات
@@ -202,6 +216,12 @@ const {
                 <td class="p-3" dir="ltr">
                   {{ formatMoney(row.nolon_total) }}
                 </td>
+                <td class="p-3" dir="ltr">
+                  {{ formatMoney(nolonPaidOf(row.id)) }}
+                </td>
+                <td class="p-3" dir="ltr">
+                  {{ formatMoney(nolonSupplierPaidOf(row.id)) }}
+                </td>
                 <td class="p-3">
                   <UBadge size="lg" :color="signedTone(nolonRestOf(row))" variant="subtle">
                     <span dir="ltr">{{ formatMoney(nolonRestOf(row)) }}</span>
@@ -210,33 +230,19 @@ const {
                 <td class="p-3" dir="ltr">
                   {{ formatMoney(row.nathriyat_total) }}
                 </td>
+                <td class="p-3" dir="ltr">
+                  {{ formatMoney(nathriyatPaidOf(row.id)) }}
+                </td>
+                <td class="p-3" dir="ltr">
+                  {{ formatMoney(nathriyatSupplierPaidOf(row.id)) }}
+                </td>
                 <td class="p-3">
                   <UBadge size="lg" :color="signedTone(nathriyatRestOf(row))" variant="subtle">
                     <span dir="ltr">{{ formatMoney(nathriyatRestOf(row)) }}</span>
                   </UBadge>
                 </td>
-                <td class="p-3 text-muted">
-                  {{ row.vehicle_number || '—' }}
-                </td>
                 <td class="p-3">
                   <div class="flex flex-wrap justify-center gap-1">
-                    <UButton
-                      v-if="nolonRestOf(row) > 0"
-                      size="xs"
-                      variant="soft"
-                      @click="openPay(row, 'nolon')"
-                    >
-                      دفع نولون
-                    </UButton>
-                    <UButton
-                      v-if="nathriyatRestOf(row) > 0"
-                      size="xs"
-                      variant="soft"
-                      color="neutral"
-                      @click="openPay(row, 'nathriyat')"
-                    >
-                      دفع نثريات
-                    </UButton>
                     <UButton
                       size="sm"
                       variant="ghost"
@@ -255,7 +261,7 @@ const {
                 </td>
               </tr>
               <tr v-if="expandedDeliveryId === row.id" class="bg-elevated/30">
-                <td colspan="14" class="p-3 text-start">
+                <td colspan="16" class="p-3 text-start">
                   <div class="space-y-2">
                     <p class="text-sm font-medium text-highlighted">
                       دفعات هذه النقلة
@@ -321,7 +327,7 @@ const {
               </tr>
             </template>
             <tr v-if="!filtered.length">
-              <td colspan="14" class="p-6 text-center text-muted">
+              <td colspan="16" class="p-6 text-center text-muted">
                 لا توجد تسليمات في هذا الموسم بعد
               </td>
             </tr>
@@ -381,7 +387,9 @@ const {
             </p>
           </UFormField>
           <p class="text-sm text-muted">
-            الأردب المحسوب:
+            معامل المورد:
+            <span dir="ltr" class="font-medium">{{ formatNumber(selectedSupplierFactor) }}</span>
+            · الأردب المحسوب:
             <span dir="ltr" class="font-medium text-highlighted">{{ formatNumber(computedArdab) }}</span>
           </p>
           <div class="grid gap-3 sm:grid-cols-2">
@@ -396,13 +404,20 @@ const {
                 @update:model-value="setDecimalField('nolon_total', $event)"
               />
             </UFormField>
-            <UFormField label="مدفوع النولون">
+            <UFormField label="مدفوع منا (نولون)">
               <DecimalInput
                 :model-value="form.nolon_paid"
                 placeholder="0"
                 suffix="جنيه"
-                :disabled="!!editing"
                 @update:model-value="setDecimalField('nolon_paid', $event)"
+              />
+            </UFormField>
+            <UFormField label="نولون طرف المورد">
+              <DecimalInput
+                :model-value="form.nolon_supplier_paid"
+                placeholder="0"
+                suffix="جنيه"
+                @update:model-value="setDecimalField('nolon_supplier_paid', $event)"
               />
             </UFormField>
             <UFormField label="إجمالي النثريات">
@@ -413,26 +428,26 @@ const {
                 @update:model-value="setDecimalField('nathriyat_total', $event)"
               />
             </UFormField>
-            <UFormField label="مدفوع النثريات">
+            <UFormField label="مدفوع منا (نثريات)">
               <DecimalInput
                 :model-value="form.nathriyat_paid"
                 placeholder="0"
                 suffix="جنيه"
-                :disabled="!!editing"
                 @update:model-value="setDecimalField('nathriyat_paid', $event)"
+              />
+            </UFormField>
+            <UFormField label="نثريات طرف المورد">
+              <DecimalInput
+                :model-value="form.nathriyat_supplier_paid"
+                placeholder="0"
+                suffix="جنيه"
+                @update:model-value="setDecimalField('nathriyat_supplier_paid', $event)"
               />
             </UFormField>
           </div>
           <p class="text-xs text-muted">
-            عند التسجيل: المدفوع يُحفظ كدفعة بتاريخ التسليم.
-            عند التعديل: المدفوع للعرض فقط — الدفعات الإضافية من زر «دفع نولون / نثريات».
+            الباقي = الإجمالي − مدفوع منا − طرف المورد. طرف المورد يُضاف للمستحق الرسمي للمورد.
           </p>
-          <UFormField label="رقم السيارة">
-            <UInput v-model="form.vehicle_number" class="w-full" placeholder="اختياري" />
-          </UFormField>
-          <UFormField label="ملاحظات">
-            <UTextarea v-model="form.notes" class="w-full" :rows="3" />
-          </UFormField>
         </div>
       </template>
       <template #footer>

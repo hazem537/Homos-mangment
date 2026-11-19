@@ -8,7 +8,7 @@ export type Purchase = Database['public']['Tables']['purchases']['Row'] & {
 }
 
 type SeasonLite = { id: string, name: string, ardab_factor: number }
-type SupplierLite = { id: string, name: string }
+type SupplierLite = { id: string, name: string, ardab_factor: number }
 type ProductLite = { id: string, name: string }
 
 function todayIsoDate() {
@@ -36,14 +36,18 @@ export function usePurchases() {
     product_id: '' as string,
     purchase_date: todayIsoDate(),
     quantity_kg: '' as string,
-    price_per_ardab: '' as string,
-    notes: ''
+    price_per_ardab: '' as string
   })
 
-  const computedArdab = computed(() => {
-    const factor = activeSeason.value?.ardab_factor ?? 170
-    return kgToArdab(parseDecimal(form.quantity_kg), Number(factor))
+  const selectedSupplierFactor = computed(() => {
+    const s = suppliers.value.find(x => x.id === form.supplier_id)
+    const factor = Number(s?.ardab_factor)
+    return factor > 0 ? factor : 170
   })
+
+  const computedArdab = computed(() =>
+    kgToArdab(parseDecimal(form.quantity_kg), selectedSupplierFactor.value)
+  )
 
   const computedTotal = computed(() => {
     return totalPrice(computedArdab.value, parseDecimal(form.price_per_ardab))
@@ -64,7 +68,7 @@ export function usePurchases() {
     return rows.filter((p) => {
       const supplierName = p.suppliers?.name || ''
       const productName = p.products?.name || ''
-      return supplierName.includes(q) || productName.includes(q) || (p.notes || '').includes(q)
+      return supplierName.includes(q) || productName.includes(q)
     })
   })
 
@@ -81,14 +85,18 @@ export function usePurchases() {
   const loadLookups = async () => {
     const [seasonRes, suppliersRes, productsRes] = await Promise.all([
       client.from('seasons').select('id, name, ardab_factor').eq('is_active', true).maybeSingle(),
-      client.from('suppliers').select('id, name').eq('is_active', true).order('name'),
+      client.from('suppliers').select('id, name, ardab_factor').eq('is_active', true).order('name'),
       client.from('products').select('id, name').eq('is_active', true).order('name')
     ])
     if (seasonRes.error) throw seasonRes.error
     if (suppliersRes.error) throw suppliersRes.error
     if (productsRes.error) throw productsRes.error
     activeSeason.value = seasonRes.data
-    suppliers.value = suppliersRes.data ?? []
+    suppliers.value = (suppliersRes.data ?? []).map(s => ({
+      id: s.id,
+      name: s.name,
+      ardab_factor: Number((s as { ardab_factor?: number }).ardab_factor) || 170
+    }))
     products.value = productsRes.data ?? []
   }
 
@@ -135,7 +143,6 @@ export function usePurchases() {
     form.purchase_date = todayIsoDate()
     form.quantity_kg = ''
     form.price_per_ardab = ''
-    form.notes = ''
     modalOpen.value = true
   }
 
@@ -146,7 +153,6 @@ export function usePurchases() {
     form.purchase_date = row.purchase_date
     form.quantity_kg = String(row.quantity_kg)
     form.price_per_ardab = String(row.price_per_ardab)
-    form.notes = row.notes || ''
     modalOpen.value = true
   }
 
@@ -187,7 +193,7 @@ export function usePurchases() {
       ardab: computedArdab.value,
       price_per_ardab: pricePerArdab,
       total_price: computedTotal.value,
-      notes: form.notes.trim() || null
+      notes: null
     }
 
     saving.value = true
@@ -240,6 +246,7 @@ export function usePurchases() {
     activeSeason,
     supplierOptions,
     productOptions,
+    selectedSupplierFactor,
     computedArdab,
     computedTotal,
     openCreate,

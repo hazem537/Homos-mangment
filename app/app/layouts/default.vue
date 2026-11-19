@@ -13,11 +13,6 @@ const sidebarOpen = useCookie<boolean>('homos-sidebar-open', {
 
 const links = [
   {
-    label: 'لوحة التحكم',
-    icon: 'i-lucide-layout-dashboard',
-    to: '/'
-  },
-  {
     label: 'الموردون',
     icon: 'i-lucide-users',
     to: '/suppliers'
@@ -41,11 +36,6 @@ const links = [
     label: 'المقالي',
     icon: 'i-lucide-flame',
     to: '/meklas'
-  },
-  {
-    label: 'مصروفات الموسم',
-    icon: 'i-lucide-wallet',
-    to: '/costs'
   },
   {
     label: 'إحصائيات المخازن',

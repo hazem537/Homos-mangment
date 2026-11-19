@@ -17,13 +17,16 @@ function todayIsoDate() {
 
 export const transferKindOptions = [
   { label: 'تحويل', value: 'transfer' as TransferKind },
-  { label: 'تسوية', value: 'settlement' as TransferKind },
-  { label: 'عموله', value: 'commission' as TransferKind },
-  { label: 'أخرى', value: 'other' as TransferKind }
+  { label: 'عموله', value: 'commission' as TransferKind }
 ]
 
+const TRANSFER_KIND_LABELS: Record<string, string> = {
+  transfer: 'تحويل',
+  commission: 'عموله'
+}
+
 export function transferKindLabel(kind: TransferKind | string) {
-  return transferKindOptions.find(o => o.value === kind)?.label || kind
+  return TRANSFER_KIND_LABELS[kind] || transferKindOptions.find(o => o.value === kind)?.label || kind
 }
 
 export function useCashTransfers() {
@@ -47,8 +50,7 @@ export function useCashTransfers() {
     product_id: '' as string,
     transfer_date: todayIsoDate(),
     amount: '' as string,
-    kind: 'transfer' as TransferKind,
-    notes: ''
+    kind: 'transfer' as TransferKind
   })
 
   const supplierDue = ref<number | null>(null)
@@ -130,7 +132,6 @@ export function useCashTransfers() {
       const productName = t.products?.name || ''
       return supplierName.includes(q)
         || productName.includes(q)
-        || (t.notes || '').includes(q)
         || transferKindLabel(t.kind).includes(q)
     })
   })
@@ -226,7 +227,6 @@ export function useCashTransfers() {
     form.transfer_date = todayIsoDate()
     form.amount = ''
     form.kind = 'transfer'
-    form.notes = ''
     modalOpen.value = true
     if (form.supplier_id && form.product_id) {
       void loadSupplierDue(form.supplier_id, form.product_id)
@@ -239,8 +239,7 @@ export function useCashTransfers() {
     form.product_id = row.product_id
     form.transfer_date = row.transfer_date
     form.amount = String(row.amount)
-    form.kind = row.kind
-    form.notes = row.notes || ''
+    form.kind = row.kind === 'commission' ? 'commission' : 'transfer'
     modalOpen.value = true
     void loadSupplierDue(form.supplier_id, form.product_id)
   }
@@ -267,19 +266,13 @@ export function useCashTransfers() {
       toast.add({ title: 'المبلغ يجب أن يكون أكبر من صفر', color: 'warning' })
       return
     }
-    if (form.kind === 'settlement' && !form.notes.trim()) {
-      toast.add({ title: 'التسوية تتطلب ملاحظة', color: 'warning' })
-      return
-    }
-
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: form.supplier_id,
       product_id: form.product_id,
       transfer_date: form.transfer_date,
       amount,
-      kind: form.kind,
-      notes: form.notes.trim() || null
+      kind: form.kind
     }
 
     saving.value = true

@@ -1,4 +1,4 @@
-import type { Database, DeliveryCostKind } from '~/types/database.types'
+import type { Database, DeliveryCostKind, DeliveryCostPayer } from '~/types/database.types'
 import {
   deliveryCostKindLabel,
   deliveryCostRest,
@@ -19,7 +19,13 @@ export type WarehouseDelivery = Database['public']['Tables']['warehouse_deliveri
 }
 
 type SeasonLite = { id: string, name: string, ardab_factor: number }
-type SupplierLite = { id: string, name: string, account_type_id: string, account_type_name: string }
+type SupplierLite = {
+  id: string
+  name: string
+  account_type_id: string
+  account_type_name: string
+  ardab_factor: number
+}
 type WarehouseLite = { id: string, name: string, account_type_id: string, account_type_name: string }
 type SectionLite = { id: string, name: string, warehouse_id: string }
 type ProductLite = { id: string, name: string }
@@ -29,8 +35,10 @@ type DeliveryMoneyField =
   | 'quantity_kg'
   | 'nolon_total'
   | 'nolon_paid'
+  | 'nolon_supplier_paid'
   | 'nathriyat_total'
   | 'nathriyat_paid'
+  | 'nathriyat_supplier_paid'
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10)
@@ -81,19 +89,24 @@ export function useDeliveries() {
     quantity_kg: '' as string,
     nolon_total: '' as string,
     nolon_paid: '' as string,
+    nolon_supplier_paid: '' as string,
     nathriyat_total: '' as string,
     nathriyat_paid: '' as string,
-    vehicle_number: '',
-    notes: ''
+    nathriyat_supplier_paid: '' as string
   })
 
   /** When false, nolon_total follows kg × rate; user edit flips it to true */
   const nolonManualOverride = ref(false)
 
-  const computedArdab = computed(() => {
-    const factor = activeSeason.value?.ardab_factor ?? 170
-    return kgToArdab(parseDecimal(form.quantity_kg), Number(factor))
+  const selectedSupplierFactor = computed(() => {
+    const s = suppliers.value.find(x => x.id === form.supplier_id)
+    const factor = Number(s?.ardab_factor)
+    return factor > 0 ? factor : 170
   })
+
+  const computedArdab = computed(() =>
+    kgToArdab(parseDecimal(form.quantity_kg), selectedSupplierFactor.value)
+  )
 
   const supplierOptions = computed(() => {
     const warehouseType = warehouses.value.find(w => w.id === form.warehouse_id)?.account_type_id
@@ -262,22 +275,30 @@ export function useDeliveries() {
       return supplierName.includes(q)
         || warehouseName.includes(q)
         || productName.includes(q)
-        || (d.vehicle_number || '').includes(q)
-        || (d.notes || '').includes(q)
     })
   })
 
   const nolonPaidOf = (deliveryId: string) =>
-    sumDeliveryCostPaid(costPayments.value, deliveryId, 'nolon')
+    sumDeliveryCostPaid(costPayments.value, deliveryId, 'nolon', 'company')
+
+  const nolonSupplierPaidOf = (deliveryId: string) =>
+    sumDeliveryCostPaid(costPayments.value, deliveryId, 'nolon', 'supplier')
 
   const nathriyatPaidOf = (deliveryId: string) =>
-    sumDeliveryCostPaid(costPayments.value, deliveryId, 'nathriyat')
+    sumDeliveryCostPaid(costPayments.value, deliveryId, 'nathriyat', 'company')
+
+  const nathriyatSupplierPaidOf = (deliveryId: string) =>
+    sumDeliveryCostPaid(costPayments.value, deliveryId, 'nathriyat', 'supplier')
 
   const nolonRestOf = (row: WarehouseDelivery) =>
-    deliveryCostRest(row.nolon_total, nolonPaidOf(row.id))
+    deliveryCostRest(row.nolon_total, nolonPaidOf(row.id), nolonSupplierPaidOf(row.id))
 
   const nathriyatRestOf = (row: WarehouseDelivery) =>
-    deliveryCostRest(row.nathriyat_total, nathriyatPaidOf(row.id))
+    deliveryCostRest(
+      row.nathriyat_total,
+      nathriyatPaidOf(row.id),
+      nathriyatSupplierPaidOf(row.id)
+    )
 
   const paymentsOf = (deliveryId: string) =>
     paymentsForDelivery(costPayments.value, deliveryId)
@@ -288,10 +309,16 @@ export function useDeliveries() {
     const nolonTotal = deliveries.value.reduce((sum, d) => sum + Number(d.nolon_total), 0)
     const nathriyatTotal = deliveries.value.reduce((sum, d) => sum + Number(d.nathriyat_total), 0)
     const nolonPaid = costPayments.value
-      .filter(p => p.kind === 'nolon' && !p.is_cancelled)
+      .filter(p => p.kind === 'nolon' && !p.is_cancelled && (p.payer || 'company') === 'company')
+      .reduce((sum, p) => sum + Number(p.amount), 0)
+    const nolonSupplierPaid = costPayments.value
+      .filter(p => p.kind === 'nolon' && !p.is_cancelled && p.payer === 'supplier')
       .reduce((sum, p) => sum + Number(p.amount), 0)
     const nathriyatPaid = costPayments.value
-      .filter(p => p.kind === 'nathriyat' && !p.is_cancelled)
+      .filter(p => p.kind === 'nathriyat' && !p.is_cancelled && (p.payer || 'company') === 'company')
+      .reduce((sum, p) => sum + Number(p.amount), 0)
+    const nathriyatSupplierPaid = costPayments.value
+      .filter(p => p.kind === 'nathriyat' && !p.is_cancelled && p.payer === 'supplier')
       .reduce((sum, p) => sum + Number(p.amount), 0)
     return {
       totalKg,
@@ -299,10 +326,12 @@ export function useDeliveries() {
       count: deliveries.value.length,
       nolonTotal,
       nolonPaid,
-      nolonRest: deliveryCostRest(nolonTotal, nolonPaid),
+      nolonSupplierPaid,
+      nolonRest: deliveryCostRest(nolonTotal, nolonPaid, nolonSupplierPaid),
       nathriyatTotal,
       nathriyatPaid,
-      nathriyatRest: deliveryCostRest(nathriyatTotal, nathriyatPaid)
+      nathriyatSupplierPaid,
+      nathriyatRest: deliveryCostRest(nathriyatTotal, nathriyatPaid, nathriyatSupplierPaid)
     }
   })
 
@@ -316,7 +345,7 @@ export function useDeliveries() {
   const loadLookups = async () => {
     const [seasonRes, suppliersRes, warehousesRes, sectionsRes, productsRes, statusesRes] = await Promise.all([
       client.from('seasons').select('id, name, ardab_factor').eq('is_active', true).maybeSingle(),
-      client.from('suppliers').select('id, name, account_type_id, account_types(name)').eq('is_active', true).order('name'),
+      client.from('suppliers').select('id, name, ardab_factor, account_type_id, account_types(name)').eq('is_active', true).order('name'),
       client.from('warehouses').select('id, name, account_type_id, account_types(name)').eq('is_active', true).order('name'),
       client.from('warehouse_sections').select('id, name, warehouse_id').eq('is_active', true).order('name'),
       client.from('products').select('id, name').eq('is_active', true).order('name'),
@@ -333,7 +362,8 @@ export function useDeliveries() {
       id: s.id,
       name: s.name,
       account_type_id: s.account_type_id,
-      account_type_name: s.account_types?.name || '—'
+      account_type_name: s.account_types?.name || '—',
+      ardab_factor: Number(s.ardab_factor) || 170
     }))
     warehouses.value = (warehousesRes.data ?? []).map((w: any) => ({
       id: w.id,
@@ -439,10 +469,10 @@ export function useDeliveries() {
     form.quantity_kg = ''
     form.nolon_total = ''
     form.nolon_paid = ''
+    form.nolon_supplier_paid = ''
     form.nathriyat_total = ''
     form.nathriyat_paid = ''
-    form.vehicle_number = ''
-    form.notes = ''
+    form.nathriyat_supplier_paid = ''
     nolonManualOverride.value = false
     modalOpen.value = true
   }
@@ -458,10 +488,10 @@ export function useDeliveries() {
     form.quantity_kg = String(row.quantity_kg)
     form.nolon_total = String(row.nolon_total ?? 0)
     form.nolon_paid = String(nolonPaidOf(row.id))
+    form.nolon_supplier_paid = String(nolonSupplierPaidOf(row.id))
     form.nathriyat_total = String(row.nathriyat_total ?? 0)
     form.nathriyat_paid = String(nathriyatPaidOf(row.id))
-    form.vehicle_number = row.vehicle_number || ''
-    form.notes = row.notes || ''
+    form.nathriyat_supplier_paid = String(nathriyatSupplierPaidOf(row.id))
     nolonManualOverride.value = !isNolonMatchingAuto(
       Number(row.quantity_kg),
       Number(row.nolon_total ?? 0)
@@ -509,6 +539,7 @@ export function useDeliveries() {
       const { error } = await client.from('delivery_cost_payments').insert({
         delivery_id: paymentDelivery.value.id,
         kind: paymentKind.value,
+        payer: 'company' as DeliveryCostPayer,
         amount,
         payment_date: paymentForm.payment_date,
         notes: paymentForm.notes.trim() || null
@@ -604,17 +635,17 @@ export function useDeliveries() {
     const nolonTotal = moneyOrZero(form.nolon_total)
     const nathriyatTotal = moneyOrZero(form.nathriyat_total)
     const nolonPaid = moneyOrZero(form.nolon_paid)
+    const nolonSupplierPaid = moneyOrZero(form.nolon_supplier_paid)
     const nathriyatPaid = moneyOrZero(form.nathriyat_paid)
+    const nathriyatSupplierPaid = moneyOrZero(form.nathriyat_supplier_paid)
 
-    if (!editing.value) {
-      if (nolonPaid > nolonTotal + 0.001) {
-        toast.add({ title: 'مدفوع النولون أكبر من الإجمالي', color: 'warning' })
-        return
-      }
-      if (nathriyatPaid > nathriyatTotal + 0.001) {
-        toast.add({ title: 'مدفوع النثريات أكبر من الإجمالي', color: 'warning' })
-        return
-      }
+    if (nolonPaid + nolonSupplierPaid > nolonTotal + 0.001) {
+      toast.add({ title: 'مدفوع النولون (منا + المورد) أكبر من الإجمالي', color: 'warning' })
+      return
+    }
+    if (nathriyatPaid + nathriyatSupplierPaid > nathriyatTotal + 0.001) {
+      toast.add({ title: 'مدفوع النثريات (منا + المورد) أكبر من الإجمالي', color: 'warning' })
+      return
     }
 
     const statusId =
@@ -641,16 +672,52 @@ export function useDeliveries() {
       quantity_kg: quantityKg,
       ardab: computedArdab.value,
       nolon_total: nolonTotal,
-      nathriyat_total: nathriyatTotal,
-      vehicle_number: form.vehicle_number.trim() || null,
-      notes: form.notes.trim() || null
+      nathriyat_total: nathriyatTotal
+    }
+
+    const syncPaidTotal = async (
+      deliveryId: string,
+      kind: DeliveryCostKind,
+      payer: DeliveryCostPayer,
+      targetPaid: number
+    ) => {
+      const current = sumDeliveryCostPaid(costPayments.value, deliveryId, kind, payer)
+      if (Math.abs(current - targetPaid) < 0.001) return
+      const { error: delError } = await client
+        .from('delivery_cost_payments')
+        .delete()
+        .eq('delivery_id', deliveryId)
+        .eq('kind', kind)
+        .eq('payer', payer)
+        .eq('is_cancelled', false)
+      if (delError) throw delError
+      if (targetPaid > 0) {
+        const { error: insertError } = await client.from('delivery_cost_payments').insert({
+          delivery_id: deliveryId,
+          kind,
+          payer,
+          amount: targetPaid,
+          payment_date: form.delivery_date,
+          notes: null
+        })
+        if (insertError) throw insertError
+      }
+    }
+
+    const syncAllPays = async (deliveryId: string) => {
+      await syncPaidTotal(deliveryId, 'nolon', 'company', nolonPaid)
+      await syncPaidTotal(deliveryId, 'nolon', 'supplier', nolonSupplierPaid)
+      await syncPaidTotal(deliveryId, 'nathriyat', 'company', nathriyatPaid)
+      await syncPaidTotal(deliveryId, 'nathriyat', 'supplier', nathriyatSupplierPaid)
     }
 
     saving.value = true
     try {
       if (editing.value) {
-        const { error } = await client.from('warehouse_deliveries').update(payload).eq('id', editing.value.id)
+        const deliveryId = editing.value.id
+        const { error } = await client.from('warehouse_deliveries').update(payload).eq('id', deliveryId)
         if (error) throw error
+        await syncAllPays(deliveryId)
         toast.add({ title: 'تم تحديث التسليم', color: 'success' })
       } else {
         const { data, error } = await client
@@ -659,33 +726,7 @@ export function useDeliveries() {
           .select('id')
           .single()
         if (error) throw error
-
-        const initialPayments = []
-        if (nolonPaid > 0) {
-          initialPayments.push({
-            delivery_id: data.id,
-            kind: 'nolon' as const,
-            amount: nolonPaid,
-            payment_date: form.delivery_date,
-            notes: null
-          })
-        }
-        if (nathriyatPaid > 0) {
-          initialPayments.push({
-            delivery_id: data.id,
-            kind: 'nathriyat' as const,
-            amount: nathriyatPaid,
-            payment_date: form.delivery_date,
-            notes: null
-          })
-        }
-        if (initialPayments.length) {
-          const { error: payError } = await client
-            .from('delivery_cost_payments')
-            .insert(initialPayments)
-          if (payError) throw payError
-        }
-
+        await syncAllPays(data.id)
         toast.add({ title: 'تم تسجيل التسليم', color: 'success' })
       }
       modalOpen.value = false
@@ -731,6 +772,7 @@ export function useDeliveries() {
     deliveryMaxKgAllowed,
     onSupplierChange,
     onWarehouseChange,
+    selectedSupplierFactor,
     computedArdab,
     expandedDeliveryId,
     paymentModalOpen,
@@ -740,7 +782,11 @@ export function useDeliveries() {
     paymentDelivery,
     nolonPaidOf,
     nathriyatPaidOf,
+    nolonPaidOf,
+    nolonSupplierPaidOf,
     nolonRestOf,
+    nathriyatPaidOf,
+    nathriyatSupplierPaidOf,
     nathriyatRestOf,
     paymentsOf,
     deliveryCostKindLabel,

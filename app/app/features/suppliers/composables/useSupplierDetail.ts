@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/vue-query";
 import type {
   Database,
   DeliveryCostKind,
+  DeliveryCostPayer,
   TransferKind,
 } from "~/types/database.types";
 import { normalizeDecimalInput, parseDecimal } from "~/utils/formatNumber";
@@ -12,11 +13,8 @@ import {
 import {
   deliveryCostKindLabel,
   deliveryCostRest,
-  formatNolonAuto,
-  isNolonMatchingAuto,
-  nolonFromKg,
-  NOLON_RATE_PER_TON,
   paymentsForDelivery,
+  sumDeliveryCostPaid,
   type DeliveryCostPaymentLite,
 } from "~/utils/deliveryCosts";
 import { queryKeys } from "~/composables/queries/queryKeys";
@@ -25,6 +23,7 @@ import type {
   SeasonLite,
   StatusLite,
   StoreLite,
+  StoreSlotLite,
   SupplierDelivery,
   SupplierDue,
   SupplierDetailBundle,
@@ -71,6 +70,7 @@ export function useSupplierDetail(
   const activeSeason = ref<SeasonLite | null>(null);
   const warehouses = ref<WarehouseLite[]>([]);
   const stores = ref<StoreLite[]>([]);
+  const storeSlots = ref<StoreSlotLite[]>([]);
   const sections = ref<WarehouseSectionLite[]>([]);
   const products = ref<ProductLite[]>([]);
   const stockStatuses = ref<StatusLite[]>([]);
@@ -102,14 +102,12 @@ export function useSupplierDetail(
     purchase_date: todayIsoDate(),
     quantity_kg: "" as string,
     price_per_ardab: "" as string,
-    notes: "",
   });
 
   const transferForm = reactive({
     transfer_date: todayIsoDate(),
     amount: "" as string,
     kind: "transfer" as TransferKind,
-    notes: "",
   });
 
   const deliveryForm = reactive({
@@ -117,15 +115,16 @@ export function useSupplierDetail(
     warehouse_id: "" as string,
     section_id: "" as string,
     store_id: "" as string,
+    store_slot_id: "" as string,
     product_id: "" as string,
     delivery_date: todayIsoDate(),
     quantity_kg: "" as string,
     nolon_total: "" as string,
     nolon_paid: "" as string,
+    nolon_supplier_paid: "" as string,
     nathriyat_total: "" as string,
     nathriyat_paid: "" as string,
-    vehicle_number: "",
-    notes: "",
+    nathriyat_supplier_paid: "" as string,
   });
 
   const deliveryDestinationOptions: {
@@ -142,23 +141,28 @@ export function useSupplierDetail(
     notes: "",
   });
 
-  /** When false, nolon_total follows kg × rate; user edit flips it to true */
-  const nolonManualOverride = ref(false);
-
   const supplierEditForm = reactive({
     name: "",
-    notes: "",
+    color: "#64748b",
     account_type_id: "" as string,
+    ardab_factor: "170" as string,
   });
 
-  const suggestedNolon = computed(() =>
-    nolonFromKg(parseDecimal(deliveryForm.quantity_kg)),
+  const normalizeProfileColor = (raw: string | null | undefined) => {
+    const value = String(raw || "").trim();
+    if (/^#[0-9A-Fa-f]{6}$/.test(value)) return value.toUpperCase();
+    return null;
+  };
+
+  /** Kg per ardab for this supplier profile. */
+  const supplierArdabFactor = computed(() => {
+    const fromSupplier = Number(supplier.value?.ardab_factor);
+    return fromSupplier > 0 ? fromSupplier : 170;
+  });
+
+  const computedPurchaseArdab = computed(() =>
+    kgToArdab(parseDecimal(purchaseForm.quantity_kg), supplierArdabFactor.value),
   );
-
-  const computedPurchaseArdab = computed(() => {
-    const factor = activeSeason.value?.ardab_factor ?? 170;
-    return kgToArdab(parseDecimal(purchaseForm.quantity_kg), Number(factor));
-  });
 
   const computedPurchaseTotal = computed(() =>
     totalPrice(
@@ -167,10 +171,9 @@ export function useSupplierDetail(
     ),
   );
 
-  const computedDeliveryArdab = computed(() => {
-    const factor = activeSeason.value?.ardab_factor ?? 170;
-    return kgToArdab(parseDecimal(deliveryForm.quantity_kg), Number(factor));
-  });
+  const computedDeliveryArdab = computed(() =>
+    kgToArdab(parseDecimal(deliveryForm.quantity_kg), supplierArdabFactor.value),
+  );
 
   const warehouseOptions = computed(() => {
     const typeId = supplier.value?.account_type_id;
@@ -200,20 +203,44 @@ export function useSupplierDetail(
     syncSectionForWarehouse();
   };
 
+  const storeSlotOptions = computed(() =>
+    storeSlots.value
+      .filter((s) => s.store_id === deliveryForm.store_id)
+      .map((s) => ({ label: s.name, value: s.id, color: s.color || null })),
+  );
+
+  const syncStoreSlotSelection = () => {
+    const options = storeSlotOptions.value;
+    if (!options.length) {
+      deliveryForm.store_slot_id = "";
+      return;
+    }
+    if (!options.some((o) => o.value === deliveryForm.store_slot_id)) {
+      deliveryForm.store_slot_id = options[0]?.value || "";
+    }
+  };
+
   const syncStoreSelection = () => {
     const options = storeOptions.value;
     if (!options.length) {
       deliveryForm.store_id = "";
+      deliveryForm.store_slot_id = "";
       return;
     }
     if (!options.some((o) => o.value === deliveryForm.store_id)) {
       deliveryForm.store_id = options[0]?.value || "";
     }
+    syncStoreSlotSelection();
+  };
+
+  const onDeliveryStoreChange = () => {
+    syncStoreSlotSelection();
   };
 
   const onDeliveryDestinationChange = async () => {
     if (deliveryForm.destination_kind === "warehouse") {
       deliveryForm.store_id = "";
+      deliveryForm.store_slot_id = "";
       if (!(await ensureWarehousesLoaded())) return;
       if (!warehouseOptions.value.length) {
         toast.add({
@@ -502,19 +529,32 @@ export function useSupplierDetail(
       const nolon = Number(stat.nolon_total || 0);
       const nathriyat = Number(stat.nathriyat_total || 0);
       const nolonPaid = Number(stat.nolon_paid || 0);
+      const nolonSupplierPaid = Number(stat.nolon_supplier_paid || 0);
       const nathriyatPaid = Number(stat.nathriyat_paid || 0);
+      const nathriyatSupplierPaid = Number(stat.nathriyat_supplier_paid || 0);
       const rows = filteredDeliveries.value;
       const ardab = rows.reduce((sum, d) => sum + Number(d.ardab), 0);
+      const nolonRest = deliveryCostRest(nolon, nolonPaid, nolonSupplierPaid);
+      const nathriyatRest = deliveryCostRest(
+        nathriyat,
+        nathriyatPaid,
+        nathriyatSupplierPaid,
+      );
       return {
         kg: Number(stat.delivered_kg || 0),
         ardab,
         nolon,
         nolonPaid,
+        nolonSupplierPaid,
+        nolonRest,
         nathriyat,
         nathriyatPaid,
+        nathriyatSupplierPaid,
+        nathriyatRest,
         costTotal: nolon + nathriyat,
         costPaid: nolonPaid + nathriyatPaid,
-        costNeeded: deliveryCostRest(nolon + nathriyat, nolonPaid + nathriyatPaid),
+        costSupplierPaid: nolonSupplierPaid + nathriyatSupplierPaid,
+        costNeeded: nolonRest + nathriyatRest,
       };
     }
     return {
@@ -522,10 +562,15 @@ export function useSupplierDetail(
       ardab: 0,
       nolon: 0,
       nolonPaid: 0,
+      nolonSupplierPaid: 0,
+      nolonRest: 0,
       nathriyat: 0,
       nathriyatPaid: 0,
+      nathriyatSupplierPaid: 0,
+      nathriyatRest: 0,
       costTotal: 0,
       costPaid: 0,
+      costSupplierPaid: 0,
       costNeeded: 0,
     };
   });
@@ -592,10 +637,12 @@ export function useSupplierDetail(
     return {
       nolonTotal: t.nolon,
       nolonPaid: t.nolonPaid,
-      nolonRest: deliveryCostRest(t.nolon, t.nolonPaid),
+      nolonSupplierPaid: t.nolonSupplierPaid,
+      nolonRest: t.nolonRest,
       nathriyatTotal: t.nathriyat,
       nathriyatPaid: t.nathriyatPaid,
-      nathriyatRest: deliveryCostRest(t.nathriyat, t.nathriyatPaid),
+      nathriyatSupplierPaid: t.nathriyatSupplierPaid,
+      nathriyatRest: t.nathriyatRest,
     };
   });
 
@@ -629,32 +676,52 @@ export function useSupplierDetail(
   const nolonPaidOf = (deliveryId: string) => {
     const row = deliveries.value.find((d) => d.id === deliveryId);
     if (row && row.nolon_paid != null) return Number(row.nolon_paid);
-    return costPayments.value
-      .filter((p) => p.delivery_id === deliveryId && p.kind === "nolon" && !p.is_cancelled)
-      .reduce((sum, p) => sum + Number(p.amount), 0);
+    return sumDeliveryCostPaid(costPayments.value, deliveryId, "nolon", "company");
+  };
+
+  const nolonSupplierPaidOf = (deliveryId: string) => {
+    const row = deliveries.value.find((d) => d.id === deliveryId);
+    if (row && row.nolon_supplier_paid != null) return Number(row.nolon_supplier_paid);
+    return sumDeliveryCostPaid(costPayments.value, deliveryId, "nolon", "supplier");
   };
 
   const nathriyatPaidOf = (deliveryId: string) => {
     const row = deliveries.value.find((d) => d.id === deliveryId);
     if (row && row.nathriyat_paid != null) return Number(row.nathriyat_paid);
-    return costPayments.value
-      .filter((p) => p.delivery_id === deliveryId && p.kind === "nathriyat" && !p.is_cancelled)
-      .reduce((sum, p) => sum + Number(p.amount), 0);
+    return sumDeliveryCostPaid(costPayments.value, deliveryId, "nathriyat", "company");
+  };
+
+  const nathriyatSupplierPaidOf = (deliveryId: string) => {
+    const row = deliveries.value.find((d) => d.id === deliveryId);
+    if (row && row.nathriyat_supplier_paid != null) {
+      return Number(row.nathriyat_supplier_paid);
+    }
+    return sumDeliveryCostPaid(costPayments.value, deliveryId, "nathriyat", "supplier");
   };
 
   const nolonRestOf = (row: SupplierDelivery) =>
-    deliveryCostRest(row.nolon_total, nolonPaidOf(row.id));
+    deliveryCostRest(
+      row.nolon_total,
+      nolonPaidOf(row.id),
+      nolonSupplierPaidOf(row.id),
+    );
 
   const nathriyatRestOf = (row: SupplierDelivery) =>
-    deliveryCostRest(row.nathriyat_total, nathriyatPaidOf(row.id));
+    deliveryCostRest(
+      row.nathriyat_total,
+      nathriyatPaidOf(row.id),
+      nathriyatSupplierPaidOf(row.id),
+    );
 
   /** Combined nolon + nathriyat for delivery ledger columns */
   const deliveryCostBundleOf = (row: SupplierDelivery) => {
     const total =
       Number(row.nolon_total || 0) + Number(row.nathriyat_total || 0);
     const paid = nolonPaidOf(row.id) + nathriyatPaidOf(row.id);
-    const needed = deliveryCostRest(total, paid);
-    return { total, paid, needed };
+    const supplierPaid =
+      nolonSupplierPaidOf(row.id) + nathriyatSupplierPaidOf(row.id);
+    const needed = deliveryCostRest(total, paid, supplierPaid);
+    return { total, paid, supplierPaid, needed };
   };
 
   const deliveryFormCostBundle = computed(() => {
@@ -664,8 +731,11 @@ export function useSupplierDetail(
     const paid =
       parseDecimal(deliveryForm.nolon_paid) +
       parseDecimal(deliveryForm.nathriyat_paid);
-    const needed = deliveryCostRest(total, paid);
-    return { total, paid, needed };
+    const supplierPaid =
+      parseDecimal(deliveryForm.nolon_supplier_paid) +
+      parseDecimal(deliveryForm.nathriyat_supplier_paid);
+    const needed = deliveryCostRest(total, paid, supplierPaid);
+    return { total, paid, supplierPaid, needed };
   });
 
   const paymentsOf = (deliveryId: string) =>
@@ -745,21 +815,43 @@ export function useSupplierDetail(
   };
 
   const ensureStoresLoaded = async () => {
-    if (stores.value.length) return true;
-    const { data, error } = await client
-      .from("stores")
-      .select("id, name")
-      .eq("is_active", true)
-      .order("name");
-    if (error) {
+    const needStores = !stores.value.length;
+    const needSlots = !storeSlots.value.length;
+    if (!needStores && !needSlots) return true;
+    const [storesRes, slotsRes] = await Promise.all([
+      needStores
+        ? client
+            .from("stores")
+            .select("id, name")
+            .eq("is_active", true)
+            .order("name")
+        : Promise.resolve({ data: stores.value, error: null }),
+      needSlots
+        ? client
+            .from("store_slots")
+            .select("id, name, store_id, color")
+            .eq("is_active", true)
+            .order("name")
+        : Promise.resolve({ data: storeSlots.value, error: null }),
+    ]);
+    if (storesRes.error) {
       toast.add({
         title: "تعذر تحميل المخازن",
-        description: error.message,
+        description: storesRes.error.message,
         color: "error",
       });
       return false;
     }
-    stores.value = data ?? [];
+    if (slotsRes.error) {
+      toast.add({
+        title: "تعذر تحميل خانات المخزن",
+        description: slotsRes.error.message,
+        color: "error",
+      });
+      return false;
+    }
+    if (needStores) stores.value = storesRes.data ?? [];
+    if (needSlots) storeSlots.value = (slotsRes.data ?? []) as StoreSlotLite[];
     return true;
   };
 
@@ -776,7 +868,6 @@ export function useSupplierDetail(
   const cancelDeliveryInline = () => {
     deliveryInlineOpen.value = false;
     editingDelivery.value = null;
-    nolonManualOverride.value = false;
   };
 
   const openPurchaseCreate = () => {
@@ -793,7 +884,6 @@ export function useSupplierDetail(
     purchaseForm.purchase_date = todayIsoDate();
     purchaseForm.quantity_kg = "";
     purchaseForm.price_per_ardab = "";
-    purchaseForm.notes = "";
     purchaseInlineOpen.value = true;
   };
 
@@ -803,7 +893,6 @@ export function useSupplierDetail(
     purchaseForm.purchase_date = row.purchase_date;
     purchaseForm.quantity_kg = String(row.quantity_kg);
     purchaseForm.price_per_ardab = String(row.price_per_ardab);
-    purchaseForm.notes = row.notes || "";
     purchaseInlineOpen.value = true;
   };
 
@@ -824,7 +913,6 @@ export function useSupplierDetail(
     transferForm.transfer_date = todayIsoDate();
     transferForm.amount = "";
     transferForm.kind = "transfer";
-    transferForm.notes = "";
     transferInlineOpen.value = true;
   };
 
@@ -832,8 +920,7 @@ export function useSupplierDetail(
     editingTransfer.value = row;
     transferForm.transfer_date = row.transfer_date;
     transferForm.amount = String(row.amount);
-    transferForm.kind = row.kind;
-    transferForm.notes = row.notes || "";
+    transferForm.kind = row.kind === "commission" ? "commission" : "transfer";
     transferInlineOpen.value = true;
   };
 
@@ -857,6 +944,7 @@ export function useSupplierDetail(
     editingDelivery.value = null;
     deliveryForm.destination_kind = "warehouse";
     deliveryForm.store_id = "";
+    deliveryForm.store_slot_id = "";
     if (!(await ensureWarehousesLoaded())) return;
     if (!warehouseOptions.value.length) {
       // Fall back to store if no matching warehouse
@@ -878,11 +966,10 @@ export function useSupplierDetail(
     deliveryForm.quantity_kg = "";
     deliveryForm.nolon_total = "";
     deliveryForm.nolon_paid = "";
+    deliveryForm.nolon_supplier_paid = "";
     deliveryForm.nathriyat_total = "";
     deliveryForm.nathriyat_paid = "";
-    deliveryForm.vehicle_number = "";
-    deliveryForm.notes = "";
-    nolonManualOverride.value = false;
+    deliveryForm.nathriyat_supplier_paid = "";
     deliveryInlineOpen.value = true;
   };
 
@@ -901,6 +988,7 @@ export function useSupplierDetail(
     deliveryForm.warehouse_id = row.warehouse_id || "";
     deliveryForm.section_id = row.section_id || "";
     deliveryForm.store_id = row.store_id || "";
+    deliveryForm.store_slot_id = row.store_slot_id || "";
     if (kind === "warehouse") syncSectionForWarehouse();
     else syncStoreSelection();
     deliveryForm.product_id = row.product_id;
@@ -908,14 +996,10 @@ export function useSupplierDetail(
     deliveryForm.quantity_kg = String(row.quantity_kg);
     deliveryForm.nolon_total = String(row.nolon_total ?? 0);
     deliveryForm.nolon_paid = String(nolonPaidOf(row.id));
+    deliveryForm.nolon_supplier_paid = String(nolonSupplierPaidOf(row.id));
     deliveryForm.nathriyat_total = String(row.nathriyat_total ?? 0);
     deliveryForm.nathriyat_paid = String(nathriyatPaidOf(row.id));
-    deliveryForm.vehicle_number = row.vehicle_number || "";
-    deliveryForm.notes = row.notes || "";
-    nolonManualOverride.value = !isNolonMatchingAuto(
-      Number(row.quantity_kg),
-      Number(row.nolon_total ?? 0),
-    );
+    deliveryForm.nathriyat_supplier_paid = String(nathriyatSupplierPaidOf(row.id));
     deliveryInlineOpen.value = true;
   };
 
@@ -968,6 +1052,7 @@ export function useSupplierDetail(
       const { error } = await client.from("delivery_cost_payments").insert({
         delivery_id: paymentDelivery.value.id,
         kind: paymentKind.value,
+        payer: "company" as DeliveryCostPayer,
         amount,
         payment_date: paymentForm.payment_date,
         notes: paymentForm.notes.trim() || null,
@@ -1045,7 +1130,7 @@ export function useSupplierDetail(
       ardab: computedPurchaseArdab.value,
       price_per_ardab: pricePerArdab,
       total_price: computedPurchaseTotal.value,
-      notes: purchaseForm.notes.trim() || null,
+      notes: null,
     };
 
     saving.value = true;
@@ -1088,11 +1173,6 @@ export function useSupplierDetail(
       toast.add({ title: "المبلغ يجب أن يكون أكبر من صفر", color: "warning" });
       return;
     }
-    if (transferForm.kind === "settlement" && !transferForm.notes.trim()) {
-      toast.add({ title: "التسوية تتطلب ملاحظة", color: "warning" });
-      return;
-    }
-
     const payload = {
       season_id: activeSeason.value.id,
       supplier_id: supplier.value.id,
@@ -1100,7 +1180,6 @@ export function useSupplierDetail(
       transfer_date: transferForm.transfer_date,
       amount,
       kind: transferForm.kind,
-      notes: transferForm.notes.trim() || null,
     };
 
     saving.value = true;
@@ -1142,6 +1221,22 @@ export function useSupplierDetail(
     if (toStore) {
       if (!deliveryForm.store_id) {
         toast.add({ title: "اختر المخزن", color: "warning" });
+        return;
+      }
+      if (!deliveryForm.store_slot_id) {
+        toast.add({ title: "اختر الخانة", color: "warning" });
+        return;
+      }
+      const slotOk = storeSlots.value.some(
+        (s) =>
+          s.id === deliveryForm.store_slot_id
+          && s.store_id === deliveryForm.store_id,
+      );
+      if (!slotOk) {
+        toast.add({
+          title: "الخانة لا تتبع المخزن المحدد",
+          color: "warning",
+        });
         return;
       }
     } else {
@@ -1206,21 +1301,29 @@ export function useSupplierDetail(
       parseDecimal(deliveryForm.nathriyat_total),
     );
     const nolonPaid = Math.max(0, parseDecimal(deliveryForm.nolon_paid));
+    const nolonSupplierPaid = Math.max(
+      0,
+      parseDecimal(deliveryForm.nolon_supplier_paid),
+    );
     const nathriyatPaid = Math.max(
       0,
       parseDecimal(deliveryForm.nathriyat_paid),
     );
+    const nathriyatSupplierPaid = Math.max(
+      0,
+      parseDecimal(deliveryForm.nathriyat_supplier_paid),
+    );
 
-    if (nolonPaid > nolonTotal + 0.001) {
+    if (nolonPaid + nolonSupplierPaid > nolonTotal + 0.001) {
       toast.add({
-        title: "مدفوع النولون أكبر من الإجمالي",
+        title: "مدفوع النولون (منا + المورد) أكبر من الإجمالي",
         color: "warning",
       });
       return;
     }
-    if (nathriyatPaid > nathriyatTotal + 0.001) {
+    if (nathriyatPaid + nathriyatSupplierPaid > nathriyatTotal + 0.001) {
       toast.add({
-        title: "مدفوع النثريات أكبر من الإجمالي",
+        title: "مدفوع النثريات (منا + المورد) أكبر من الإجمالي",
         color: "warning",
       });
       return;
@@ -1247,6 +1350,7 @@ export function useSupplierDetail(
       warehouse_id: toStore ? null : deliveryForm.warehouse_id,
       section_id: toStore ? null : deliveryForm.section_id,
       store_id: toStore ? deliveryForm.store_id : null,
+      store_slot_id: toStore ? deliveryForm.store_slot_id : null,
       product_id: deliveryForm.product_id,
       status_id: statusId,
       delivery_date: deliveryForm.delivery_date,
@@ -1254,18 +1358,21 @@ export function useSupplierDetail(
       ardab: computedDeliveryArdab.value,
       nolon_total: nolonTotal,
       nathriyat_total: nathriyatTotal,
-      vehicle_number: deliveryForm.vehicle_number.trim() || null,
-      notes: deliveryForm.notes.trim() || null,
     };
 
-    /** Replace paid total for a kind: cancel old rows, insert one if amount > 0 */
+    /** Replace paid total for kind+payer: delete matching rows, insert one if amount > 0 */
     const syncPaidTotal = async (
       deliveryId: string,
       kind: DeliveryCostKind,
+      payer: DeliveryCostPayer,
       targetPaid: number,
     ) => {
-      const current =
-        kind === "nolon" ? nolonPaidOf(deliveryId) : nathriyatPaidOf(deliveryId);
+      const current = sumDeliveryCostPaid(
+        costPayments.value,
+        deliveryId,
+        kind,
+        payer,
+      );
       if (Math.abs(current - targetPaid) < 0.001) return;
 
       const { error: cancelError } = await client
@@ -1273,6 +1380,7 @@ export function useSupplierDetail(
         .delete()
         .eq("delivery_id", deliveryId)
         .eq("kind", kind)
+        .eq("payer", payer)
         .eq("is_cancelled", false);
       if (cancelError) throw cancelError;
 
@@ -1282,12 +1390,25 @@ export function useSupplierDetail(
           .insert({
             delivery_id: deliveryId,
             kind,
+            payer,
             amount: targetPaid,
             payment_date: deliveryForm.delivery_date,
             notes: "تعديل من صف التسليم",
           });
         if (insertError) throw insertError;
       }
+    };
+
+    const syncAllPays = async (deliveryId: string) => {
+      await syncPaidTotal(deliveryId, "nolon", "company", nolonPaid);
+      await syncPaidTotal(deliveryId, "nolon", "supplier", nolonSupplierPaid);
+      await syncPaidTotal(deliveryId, "nathriyat", "company", nathriyatPaid);
+      await syncPaidTotal(
+        deliveryId,
+        "nathriyat",
+        "supplier",
+        nathriyatSupplierPaid,
+      );
     };
 
     saving.value = true;
@@ -1299,8 +1420,7 @@ export function useSupplierDetail(
           .update(payload)
           .eq("id", deliveryId);
         if (error) throw error;
-        await syncPaidTotal(deliveryId, "nolon", nolonPaid);
-        await syncPaidTotal(deliveryId, "nathriyat", nathriyatPaid);
+        await syncAllPays(deliveryId);
         toast.add({ title: "تم تحديث التسليم", color: "success" });
       } else {
         const { data, error } = await client
@@ -1309,33 +1429,7 @@ export function useSupplierDetail(
           .select("id")
           .single();
         if (error) throw error;
-
-        const initialPayments = [];
-        if (nolonPaid > 0) {
-          initialPayments.push({
-            delivery_id: data.id,
-            kind: "nolon" as const,
-            amount: nolonPaid,
-            payment_date: deliveryForm.delivery_date,
-            notes: null,
-          });
-        }
-        if (nathriyatPaid > 0) {
-          initialPayments.push({
-            delivery_id: data.id,
-            kind: "nathriyat" as const,
-            amount: nathriyatPaid,
-            payment_date: deliveryForm.delivery_date,
-            notes: null,
-          });
-        }
-        if (initialPayments.length) {
-          const { error: payError } = await client
-            .from("delivery_cost_payments")
-            .insert(initialPayments);
-          if (payError) throw payError;
-        }
-
+        await syncAllPays(data.id);
         toast.add({ title: "تم تسجيل التسليم", color: "success" });
       }
       deliveryInlineOpen.value = false;
@@ -1408,8 +1502,12 @@ export function useSupplierDetail(
   const openSupplierEdit = () => {
     if (!supplier.value) return;
     supplierEditForm.name = supplier.value.name;
-    supplierEditForm.notes = supplier.value.notes || "";
+    supplierEditForm.color =
+      normalizeProfileColor(supplier.value.color) || "#64748b";
     supplierEditForm.account_type_id = supplier.value.account_type_id;
+    supplierEditForm.ardab_factor = String(
+      Number(supplier.value.ardab_factor) || 170,
+    );
     supplierEditModalOpen.value = true;
   };
 
@@ -1423,12 +1521,21 @@ export function useSupplierDetail(
       toast.add({ title: "اختر نوع الحساب", color: "warning" });
       return;
     }
+    const ardabFactor = parseDecimal(supplierEditForm.ardab_factor);
+    if (!(ardabFactor > 0)) {
+      toast.add({
+        title: "معامل الأردب يجب أن يكون أكبر من صفر",
+        color: "warning",
+      });
+      return;
+    }
     saving.value = true;
     try {
       const payload = {
         name: supplierEditForm.name.trim(),
-        notes: supplierEditForm.notes.trim() || null,
+        color: normalizeProfileColor(supplierEditForm.color),
         account_type_id: supplierEditForm.account_type_id,
+        ardab_factor: ardabFactor,
       };
       const { error } = await client
         .from("suppliers")
@@ -1474,6 +1581,7 @@ export function useSupplierDetail(
     warehouses.value = bundle.lookups.warehouses;
     sections.value = bundle.lookups.sections;
     stores.value = bundle.lookups.stores;
+    storeSlots.value = bundle.lookups.store_slots;
     stockStatuses.value = bundle.lookups.stock_statuses;
     due.value = dueByProduct.value[0] ?? null;
 
@@ -1550,6 +1658,164 @@ export function useSupplierDetail(
     onSelectedProductChange();
   });
 
+  /** Univer sheet: upsert purchase from cell commit. */
+  const commitPurchaseSheet = async (
+    row: SupplierPurchase | null,
+    fields: {
+      purchase_date: string
+      quantity_kg: number
+      price_per_ardab: number
+    },
+  ) => {
+    if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return false
+    const profileProductId = selectedProductId.value
+    if (!profileProductId) {
+      toast.add({ title: "الصنف غير محدد لهذا الملف", color: "warning" })
+      return false
+    }
+    if (!fields.purchase_date) {
+      toast.add({ title: "التاريخ مطلوب", color: "warning" })
+      return false
+    }
+    if (!(fields.quantity_kg > 0)) {
+      toast.add({ title: "الكمية يجب أن تكون أكبر من صفر", color: "warning" })
+      return false
+    }
+    if (!(fields.price_per_ardab > 0)) {
+      toast.add({ title: "سعر الأردب مطلوب", color: "warning" })
+      return false
+    }
+    const ardab = kgToArdab(fields.quantity_kg, supplierArdabFactor.value)
+    const total = totalPrice(ardab, fields.price_per_ardab)
+    const payload = {
+      season_id: activeSeason.value.id,
+      supplier_id: supplier.value.id,
+      product_id: profileProductId,
+      purchase_date: fields.purchase_date,
+      quantity_kg: fields.quantity_kg,
+      ardab,
+      price_per_ardab: fields.price_per_ardab,
+      total_price: total,
+      notes: null,
+    }
+    saving.value = true
+    try {
+      if (row?.id) {
+        const { error } = await client.from("purchases").update(payload).eq("id", row.id)
+        if (error) throw error
+        toast.add({ title: "تم تحديث الشراء", color: "success" })
+      } else {
+        const { error } = await client.from("purchases").insert(payload)
+        if (error) throw error
+        toast.add({ title: "تم تسجيل الشراء", color: "success" })
+      }
+      await invalidateAfterMutation()
+      return true
+    } catch (e: any) {
+      toast.add({ title: "فشل الحفظ", description: e.message, color: "error" })
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
+  const commitTransferSheet = async (
+    row: SupplierTransfer | null,
+    fields: {
+      transfer_date: string
+      kind: TransferKind
+      amount: number
+    },
+  ) => {
+    if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return false
+    const productId = selectedProductId.value
+    if (!productId) {
+      toast.add({ title: "الصنف غير محدد لهذا الملف", color: "warning" })
+      return false
+    }
+    if (!fields.transfer_date) {
+      toast.add({ title: "التاريخ مطلوب", color: "warning" })
+      return false
+    }
+    if (!(fields.amount > 0)) {
+      toast.add({ title: "المبلغ يجب أن يكون أكبر من صفر", color: "warning" })
+      return false
+    }
+    const payload = {
+      season_id: activeSeason.value.id,
+      supplier_id: supplier.value.id,
+      product_id: productId,
+      transfer_date: fields.transfer_date,
+      kind: fields.kind,
+      amount: fields.amount,
+    }
+    saving.value = true
+    try {
+      if (row?.id) {
+        const { error } = await client.from("cash_transfers").update(payload).eq("id", row.id)
+        if (error) throw error
+        toast.add({ title: "تم تحديث التحويل", color: "success" })
+      } else {
+        const { error } = await client.from("cash_transfers").insert(payload)
+        if (error) throw error
+        toast.add({ title: "تم تسجيل التحويل", color: "success" })
+      }
+      await invalidateAfterMutation()
+      return true
+    } catch (e: any) {
+      toast.add({ title: "فشل الحفظ", description: e.message, color: "error" })
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
+  const commitDeliverySheet = async (
+    row: SupplierDelivery,
+    fields: Partial<{
+      delivery_date: string
+      quantity_kg: number
+      nolon_total: number
+      nathriyat_total: number
+    }>,
+  ) => {
+    if (!ensureCanCreate() || !supplier.value || !activeSeason.value) return false
+    const quantityKg = fields.quantity_kg ?? Number(row.quantity_kg || 0)
+    const deliveryDate = fields.delivery_date ?? row.delivery_date
+    if (!deliveryDate) {
+      toast.add({ title: "التاريخ مطلوب", color: "warning" })
+      return false
+    }
+    if (!(quantityKg > 0)) {
+      toast.add({ title: "الكمية يجب أن تكون أكبر من صفر", color: "warning" })
+      return false
+    }
+    const ardab = kgToArdab(quantityKg, supplierArdabFactor.value)
+    const payload = {
+      delivery_date: deliveryDate,
+      quantity_kg: quantityKg,
+      ardab,
+      nolon_total: fields.nolon_total ?? Number(row.nolon_total || 0),
+      nathriyat_total: fields.nathriyat_total ?? Number(row.nathriyat_total || 0),
+    }
+    saving.value = true
+    try {
+      const { error } = await client
+        .from("warehouse_deliveries")
+        .update(payload)
+        .eq("id", row.id)
+      if (error) throw error
+      toast.add({ title: "تم تحديث التسليم", color: "success" })
+      await invalidateAfterMutation()
+      return true
+    } catch (e: any) {
+      toast.add({ title: "فشل الحفظ", description: e.message, color: "error" })
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
   return {
     loading,
     isRefreshing,
@@ -1602,22 +1868,30 @@ export function useSupplierDetail(
     canAddTransfer,
     canAddDelivery,
     paymentRemaining,
+    supplierArdabFactor,
     computedPurchaseArdab,
     computedPurchaseTotal,
     computedDeliveryArdab,
     warehouseOptions,
     storeOptions,
+    storeSlotOptions,
     deliveryDestinationOptions,
     productOptions,
     deliveryProductOptions,
     productNameOf,
     sectionOptions,
     onDeliveryWarehouseChange,
+    onDeliveryStoreChange,
     onDeliveryDestinationChange,
     transferKindOptions,
     transferKindLabel: (kind: TransferKind | string) => transferKindLabel(kind),
     deliveryCostKindLabel,
+    nolonPaidOf: (row: SupplierDelivery) => nolonPaidOf(row.id),
+    nolonSupplierPaidOf: (row: SupplierDelivery) => nolonSupplierPaidOf(row.id),
     nolonRestOf,
+    nathriyatPaidOf: (row: SupplierDelivery) => nathriyatPaidOf(row.id),
+    nathriyatSupplierPaidOf: (row: SupplierDelivery) =>
+      nathriyatSupplierPaidOf(row.id),
     nathriyatRestOf,
     deliveryCostBundleOf,
     deliveryFormCostBundle,
@@ -1642,6 +1916,9 @@ export function useSupplierDetail(
     savePurchase,
     saveTransfer,
     saveDelivery,
+    commitPurchaseSheet,
+    commitTransferSheet,
+    commitDeliverySheet,
     softDeletePurchase,
     softDeleteTransfer,
     softDeleteDelivery,
@@ -1659,27 +1936,17 @@ export function useSupplierDetail(
         | "quantity_kg"
         | "nolon_total"
         | "nolon_paid"
+        | "nolon_supplier_paid"
         | "nathriyat_total"
-        | "nathriyat_paid",
+        | "nathriyat_paid"
+        | "nathriyat_supplier_paid",
       raw: string,
     ) => {
       deliveryForm[field] = normalizeDecimalInput(raw);
-      if (field === "nolon_total") {
-        nolonManualOverride.value = true;
-        return;
-      }
-      if (field === "quantity_kg" && !nolonManualOverride.value) {
-        deliveryForm.nolon_total = formatNolonAuto(
-          parseDecimal(deliveryForm.quantity_kg),
-        );
-      }
     },
     setPaymentDecimal: (raw: string) => {
       paymentForm.amount = normalizeDecimalInput(raw);
     },
-    nolonManualOverride,
-    suggestedNolon,
-    nolonRatePerTon: NOLON_RATE_PER_TON,
     reload: load,
   };
 }

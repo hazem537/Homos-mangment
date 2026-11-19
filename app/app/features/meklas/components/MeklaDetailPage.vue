@@ -18,12 +18,14 @@ const {
   transferForm,
   transferKindOptions,
   transferToOptions,
+  transferToSlotOptions,
   transferToLabel,
   needsTransferDestination,
   transferStatusOptions,
   transferAvailableKg,
   openTransfer,
   onTransferKindChange,
+  onTransferStoreChange,
   cancelTransfer,
   saveTransfer,
   setTransferQty
@@ -44,7 +46,6 @@ type MeklaMovementRow = {
   quantity_kg: number
   qty_before: number
   qty_after: number
-  notes: string | null
 }
 
 const sortByDate = <T extends { date: string, created_at: string }>(rows: T[]) =>
@@ -66,8 +67,7 @@ const movements = computed((): MeklaMovementRow[] =>
       status_name: row.status_name,
       quantity_kg: row.quantity_kg,
       qty_before: row.qty_before,
-      qty_after: row.qty_after,
-      notes: row.notes
+      qty_after: row.qty_after
     })),
     ...ledger.value.outgoing.map(row => ({
       id: `out-${row.id}`,
@@ -79,8 +79,7 @@ const movements = computed((): MeklaMovementRow[] =>
       status_name: row.status_name,
       quantity_kg: row.quantity_kg,
       qty_before: row.qty_before,
-      qty_after: row.qty_after,
-      notes: row.notes
+      qty_after: row.qty_after
     }))
   ])
 )
@@ -266,6 +265,23 @@ const cellNowrapClass = 'p-2 whitespace-nowrap'
             label-key="label"
             class="w-full"
             :placeholder="`اختر ${transferToLabel}`"
+            @update:model-value="transferForm.to_kind === 'store' ? onTransferStoreChange(String($event || '')) : undefined"
+          />
+        </div>
+        <div
+          v-if="transferForm.to_kind === 'store'"
+          class="w-36 shrink-0"
+        >
+          <p class="mb-1 text-xs text-muted">
+            الخانة
+          </p>
+          <USelect
+            v-model="transferForm.to_slot_id"
+            :items="transferToSlotOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+            placeholder="اختر الخانة"
           />
         </div>
         <div class="w-28 shrink-0">
@@ -276,16 +292,6 @@ const cellNowrapClass = 'p-2 whitespace-nowrap'
             :model-value="transferForm.quantity_kg"
             placeholder="كجم"
             @update:model-value="setTransferQty"
-          />
-        </div>
-        <div class="w-44 shrink-0">
-          <p class="mb-1 text-xs text-muted">
-            ملاحظات
-          </p>
-          <UInput
-            v-model="transferForm.notes"
-            class="w-full"
-            :ui="cellInputUi"
           />
         </div>
         <div class="flex shrink-0 items-center gap-1 pb-0.5">

@@ -29,6 +29,7 @@ function emptyTotals(): SupplierStatsRow {
     money_paid: 0,
     money_due: 0,
     commission_total: 0,
+    warehouse_costs_total: 0,
     avg_price_per_ardab: 0,
     nolon_total: 0,
     nathriyat_total: 0,
@@ -41,7 +42,10 @@ function emptyTotals(): SupplierStatsRow {
   }
 }
 
-function sumRows(rows: SupplierStatsRow[]): SupplierStatsRow {
+function sumRows(
+  rows: SupplierStatsRow[],
+  opts?: { includeWarehouseCosts?: boolean }
+): SupplierStatsRow {
   const t = emptyTotals()
   for (const r of rows) {
     t.purchased_kg += Number(r.purchased_kg) || 0
@@ -54,6 +58,7 @@ function sumRows(rows: SupplierStatsRow[]): SupplierStatsRow {
     t.money_paid += Number(r.money_paid) || 0
     t.money_due += Number(r.money_due) || 0
     t.commission_total += Number(r.commission_total) || 0
+    t.warehouse_costs_total += Number(r.warehouse_costs_total) || 0
     t.nolon_total += Number(r.nolon_total) || 0
     t.nathriyat_total += Number(r.nathriyat_total) || 0
     t.nolon_paid += Number(r.nolon_paid) || 0
@@ -63,10 +68,16 @@ function sumRows(rows: SupplierStatsRow[]): SupplierStatsRow {
     t.cost_paid += Number(r.cost_paid) || 0
     t.cost_needed += Number(r.cost_needed) || 0
   }
+  const warehousePart = opts?.includeWarehouseCosts ? t.warehouse_costs_total : 0
   t.avg_price_per_ardab = t.ardab_total > 0.00005
     ? Number((
-      (t.purchases_total + t.commission_total + t.nolon_total + t.nathriyat_total)
-      / t.ardab_total
+      (
+        t.purchases_total
+        + t.commission_total
+        + t.nolon_total
+        + t.nathriyat_total
+        + warehousePart
+      ) / t.ardab_total
     ).toFixed(2))
     : 0
   return t
@@ -222,7 +233,7 @@ export function useSupplierStats() {
     )
   })
 
-  const totals = computed(() => sumRows(rows.value))
+  const totals = computed(() => sumRows(rows.value, { includeWarehouseCosts: true }))
 
   const supplierTotals = computed(() => sumRows(filteredSuppliers.value))
 

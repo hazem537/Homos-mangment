@@ -7,11 +7,11 @@ import {
   resolveAccessToken
 } from './helpers/cleanup'
 
-/** Match formatNumber/fr-FR display (thin spaces → one or more spaces). */
+/** Match formatNumber/en-US display (10,080.00) inside optional LTR marks. */
 function formattedNumberRe(n: number) {
   const [intPart, dec = '00'] = n.toFixed(2).split('.')
-  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '\\s+')
-  return new RegExp(`${grouped},${dec}`)
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return new RegExp(`${grouped}\\.${dec}`)
 }
 
 async function expectStatCard(page: Page, title: string, value: number) {

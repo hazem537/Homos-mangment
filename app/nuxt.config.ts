@@ -35,8 +35,7 @@ export default defineNuxtConfig({
     { path: '~/features/meklas/components', pathPrefix: false },
     { path: '~/features/products/components', pathPrefix: false },
     { path: '~/features/stock-statuses/components', pathPrefix: false },
-    { path: '~/features/seasons/components', pathPrefix: false },
-    { path: '~/features/costs/components', pathPrefix: false }
+    { path: '~/features/seasons/components', pathPrefix: false }
   ],
 
   app: {
@@ -74,6 +73,12 @@ export default defineNuxtConfig({
   },
 
   compatibilityDate: '2026-06-30',
+
+  vite: {
+    optimizeDeps: {
+      include: ['handsontable', '@handsontable/vue3']
+    }
+  },
 
   eslint: {
     config: {

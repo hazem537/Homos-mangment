@@ -5,7 +5,7 @@
 begin;
 
 -- Child / transaction tables first
-truncate table public.season_costs cascade;
+truncate table public.warehouse_expenses cascade;
 truncate table public.delivery_cost_payments cascade;
 truncate table public.stock_movements cascade;
 truncate table public.warehouse_deliveries cascade;

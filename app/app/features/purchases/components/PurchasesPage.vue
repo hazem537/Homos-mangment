@@ -13,6 +13,7 @@ const {
   activeSeason,
   supplierOptions,
   productOptions,
+  selectedSupplierFactor,
   computedArdab,
   computedTotal,
   openCreate,
@@ -31,9 +32,9 @@ const {
           المشتريات
         </h2>
         <p class="text-muted mt-1">
-          تسجيل شراء الحمص الخام — الأردب = كجم ÷ معامل الموسم
+          تسجيل شراء الحمص الخام — الأردب = كجم ÷ معامل المورد
           <span v-if="activeSeason">
-            ({{ activeSeason.name }} · معامل {{ activeSeason.ardab_factor }})
+            ({{ activeSeason.name }})
           </span>
         </p>
       </div>
@@ -224,6 +225,11 @@ const {
           </UFormField>
           <div class="rounded-lg bg-elevated/60 p-3 text-sm space-y-1">
             <p>
+              معامل المورد:
+              <span class="font-semibold" dir="ltr">{{ formatNumber(selectedSupplierFactor) }}</span>
+              كجم/أردب
+            </p>
+            <p>
               الأردب المحسوب:
               <span class="font-semibold" dir="ltr">{{ formatNumber(computedArdab) }}</span>
             </p>
@@ -232,9 +238,6 @@ const {
               <span class="font-semibold" dir="ltr">{{ formatMoney(computedTotal) }}</span>
             </p>
           </div>
-          <UFormField label="ملاحظات">
-            <UTextarea v-model="form.notes" class="w-full" :rows="3" />
-          </UFormField>
         </div>
       </template>
       <template #footer>

@@ -16,7 +16,9 @@ export type SupplierTransfer =
 export type SupplierDelivery =
   Database['public']['Tables']['warehouse_deliveries']['Row'] & {
     nolon_paid?: number | null
+    nolon_supplier_paid?: number | null
     nathriyat_paid?: number | null
+    nathriyat_supplier_paid?: number | null
     kg_before?: number | null
     kg_after?: number | null
     warehouses?: { id: string; name: string } | null
@@ -26,6 +28,7 @@ export type SupplierDelivery =
       warehouse_id: string
     } | null
     stores?: { id: string; name: string } | null
+    store_slots?: { id: string; name: string; color?: string | null } | null
     products?: { id: string; name: string } | null
     stock_statuses?: { id: string; name: string } | null
   }
@@ -33,17 +36,25 @@ export type SupplierDelivery =
 export type SupplierLite = {
   id: string
   name: string
-  notes: string | null
+  color: string | null
   is_active: boolean
   account_type_id: string
   account_type_name: string
   product_id: string
   product_name: string
+  /** Kg per ardab for this supplier (ardab = kg / factor). */
+  ardab_factor?: number | null
 }
 
 export type SeasonLite = { id: string; name: string; ardab_factor: number }
 export type WarehouseLite = { id: string; name: string; account_type_id: string }
 export type StoreLite = { id: string; name: string }
+export type StoreSlotLite = {
+  id: string
+  name: string
+  store_id: string
+  color?: string | null
+}
 export type ProductLite = { id: string; name: string }
 export type StatusLite = {
   id: string
@@ -68,7 +79,9 @@ export type SupplierProductStat = {
   nolon_total: number
   nathriyat_total: number
   nolon_paid: number
+  nolon_supplier_paid: number
   nathriyat_paid: number
+  nathriyat_supplier_paid: number
   transfers_total: number
   commission_total: number
   supplier_balance: number
@@ -93,6 +106,7 @@ export type SupplierDetailBundle = {
     warehouses: WarehouseLite[]
     sections: WarehouseSectionLite[]
     stores: StoreLite[]
+    store_slots: StoreSlotLite[]
     stock_statuses: StatusLite[]
   }
 }
@@ -116,6 +130,7 @@ function emptyBundle(): SupplierDetailBundle {
       warehouses: [],
       sections: [],
       stores: [],
+      store_slots: [],
       stock_statuses: []
     }
   }
@@ -160,6 +175,7 @@ export function mapSupplierDetailBundle(raw: unknown): SupplierDetailBundle {
       warehouses: asArray<WarehouseLite>(lookups.warehouses),
       sections: asArray<WarehouseSectionLite>(lookups.sections),
       stores: asArray<StoreLite>(lookups.stores),
+      store_slots: asArray<StoreSlotLite>(lookups.store_slots),
       stock_statuses: asArray<StatusLite>(lookups.stock_statuses)
     }
   }

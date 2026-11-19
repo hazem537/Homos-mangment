@@ -206,9 +206,6 @@ export async function cleanupCreatedRow(
 export async function cleanupE2eLeftovers(request: APIRequestContext, accessToken: string) {
   await deleteByFilter(request, 'purchases', `notes=like.${encodeURIComponent('*purchase-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'purchases', `notes=like.${encodeURIComponent('*ledger-purchase-e2e-*')}`, accessToken)
-  await deleteByFilter(request, 'cash_transfers', `notes=like.${encodeURIComponent('*transfer-e2e-*')}`, accessToken)
-  await deleteByFilter(request, 'stock_movements', `notes=like.${encodeURIComponent('*e2e*')}`, accessToken)
-  await deleteByFilter(request, 'warehouse_deliveries', `notes=like.${encodeURIComponent('*delivery-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'suppliers', `name=like.${encodeURIComponent('*مورد-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'suppliers', `name=like.${encodeURIComponent('*مورد-كشف-e2e-*')}`, accessToken)
   await deleteByFilter(request, 'suppliers', `name=like.${encodeURIComponent('*00-e2e-*')}`, accessToken)

@@ -178,8 +178,18 @@ export function useStores() {
     if (!ok) return
     saving.value = true
     try {
-      await client.from('stock_movements').delete().eq('from_kind', 'store').eq('from_id', row.store_id)
-      await client.from('stock_movements').delete().eq('to_kind', 'store').eq('to_id', row.store_id)
+      const { error: fromErr } = await client
+        .from('stock_movements')
+        .delete()
+        .eq('from_kind', 'store')
+        .eq('from_id', row.store_id)
+      if (fromErr) throw fromErr
+      const { error: toErr } = await client
+        .from('stock_movements')
+        .delete()
+        .eq('to_kind', 'store')
+        .eq('to_id', row.store_id)
+      if (toErr) throw toErr
       const { error } = await client.from('stores').delete().eq('id', row.store_id)
       if (error) throw error
       toast.add({ title: 'تم حذف المخزن', color: 'success' })

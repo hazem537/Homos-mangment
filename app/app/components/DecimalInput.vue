@@ -11,6 +11,7 @@ const props = withDefaults(defineProps<{
   /** Trailing label, e.g. جنيه on money inputs */
   suffix?: string
   disabled?: boolean
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
   /** Extra classes on the input root (e.g. fixed cell width) */
   class?: string
   title?: string
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<{
   prefix: '',
   suffix: '',
   disabled: false,
+  size: undefined,
   class: 'w-full',
   title: undefined
 })
@@ -66,6 +68,7 @@ const onUpdate = (value: unknown) => {
     type="text"
     :inputmode="integer ? 'numeric' : 'decimal'"
     :class="props.class || 'w-full'"
+    :size="size"
     :title="title"
     dir="ltr"
     :placeholder="placeholder"

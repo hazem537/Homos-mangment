@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { formatMoney, formatNumber, signedTone } from '~/utils/formatNumber'
 import { accountTypeLabel } from '~/utils/accountType'
+import type { SupplierDelivery } from '../utils/supplierDetailBundle'
 
 const props = defineProps<{
   supplierId: string
@@ -18,147 +19,101 @@ const {
   filteredDeliveries,
   selectedProductName,
   selectedProductRemainingKg,
-  isPurchaseCreating,
-  isTransferCreating,
-  isDeliveryCreating,
+  deliveryInlineOpen,
+  editingDelivery,
   supplierEditModalOpen,
-  purchaseForm,
-  transferForm,
   deliveryForm,
+  deliveryMaxKgAllowed,
   supplierEditForm,
   supplierDetailStats,
-  purchaseTotals,
   purchaseRunningAvgOf,
-  computedPurchaseRunningAvg,
-  transferTotals,
-  deliveryTotals,
-  deliveryKgRunningOf,
-  deliveryCreateKgRunning,
-  deliveryKgRemainingFinal,
-  deliveryMaxKgAllowed,
-  canAddTransfer,
-  canAddDelivery,
-  paymentModalOpen,
+      paymentModalOpen,
   paymentDelivery,
   paymentKind,
   paymentForm,
   paymentRemaining,
-  computedPurchaseArdab,
-  computedPurchaseTotal,
   warehouseOptions,
   storeOptions,
+  storeSlotOptions,
   deliveryDestinationOptions,
   sectionOptions,
   onDeliveryWarehouseChange,
+  onDeliveryStoreChange,
   onDeliveryDestinationChange,
   transferKindOptions,
   transferKindLabel,
   deliveryCostKindLabel,
+  nolonPaidOf,
+  nolonSupplierPaidOf,
   nolonRestOf,
+  nathriyatPaidOf,
+  nathriyatSupplierPaidOf,
   nathriyatRestOf,
-  deliveryCostBundleOf,
-  deliveryFormCostBundle,
   paymentsOf,
   openDeliveryPay,
   saveDeliveryPayment,
   softDeleteDeliveryPayment,
-  openPurchaseCreate,
-  openPurchaseEdit,
-  cancelPurchaseInline,
-  isPurchaseRowEditing,
-  openTransferCreate,
-  openTransferEdit,
-  cancelTransferInline,
-  isTransferRowEditing,
   openDeliveryCreate,
   openDeliveryEdit,
   cancelDeliveryInline,
-  isDeliveryRowEditing,
   openSupplierEdit,
   saveSupplierEdit,
-  savePurchase,
-  saveTransfer,
   saveDelivery,
   softDeletePurchase,
   softDeleteTransfer,
   softDeleteDelivery,
+  commitPurchaseSheet,
+  commitTransferSheet,
+  commitDeliverySheet,
+  purchaseTotals,
+  transferTotals,
+  deliveryTotals,
+  purchaseInlineOpen,
+  transferInlineOpen,
+  editingPurchase,
+  editingTransfer,
+  purchaseForm,
+  transferForm,
+  supplierArdabFactor,
+  computedPurchaseArdab,
+  computedPurchaseTotal,
+  openPurchaseCreate,
+  openPurchaseEdit,
+  cancelPurchaseInline,
+  openTransferCreate,
+  openTransferEdit,
+  cancelTransferInline,
+  savePurchase,
+  saveTransfer,
   setPurchaseDecimal,
   setTransferDecimal,
   setDeliveryDecimal,
-  setPaymentDecimal,
-  nolonManualOverride,
-  nolonRatePerTon
+  setPaymentDecimal
 } = useSupplierDetail(
   () => props.supplierId,
   () => props.productId
 )
 
-const cellInputUi = { base: 'px-1.5 py-1.5 text-base rounded-sm tabular-nums text-end' }
-/** Shared body row height so empty pads match data rows */
-const ledgerRowClass = 'h-14'
-/** Panel title bar (المشتريات / التحويلات / التسليمات) */
-const ledgerPanelHeaderClass =
-  'flex h-12 shrink-0 items-center gap-2.5 whitespace-nowrap border-b border-default bg-gradient-to-b from-elevated to-elevated/70 px-3.5'
-/** Outer frame for each of the three ledger tables */
-const ledgerPanelClass =
-  'flex h-full min-h-0 w-max shrink-0 flex-col overflow-hidden border-e-2 border-default bg-default last:border-e-0'
-/** Title text inside each ledger panel */
-const ledgerPanelTitleClass =
-  'text-[0.95rem] font-semibold tracking-wide text-highlighted'
-/** Scroll areas (vertical panels + horizontal ledger strip) */
-const ledgerScrollClass = 'homos-scroll'
-/** Shared table typography for all three ledgers */
-const ledgerTableClass =
-  'h-full w-max border-collapse text-base text-center whitespace-nowrap tabular-nums'
-/** Table column header cells — same height across all three ledgers */
-const ledgerThClass =
-  'h-11 border-e border-default/50 p-2.5 text-base font-medium align-middle last:border-e-0'
-/** Notes / البيان — wrap inside cell so table border expands around content */
-const ledgerNotesTdClass =
-  'max-w-[12rem] p-2 align-middle text-start text-muted whitespace-normal break-words'
-const ledgerNotesThClass =
-  'h-11 max-w-[12rem] border-e border-default/50 p-2.5 text-base font-medium align-middle last:border-e-0'
-/** Empty grid cells that fill leftover height above totals */
-const ledgerFillTdClass =
-  'h-full min-h-12 border-t border-e border-default/40 bg-elevated/20 p-0 last:border-e-0'
-/** Totals cells — same columns as body, frozen at bottom */
-const ledgerTotalTdClass =
-  'border-t-2 border-e border-default bg-elevated p-2.5 text-base last:border-e-0'
-/** Compact padding for supplier header stats cards (override Card default p-4 sm:p-6) */
-const statsCardUi = { body: 'p-2 sm:p-2.5' }
-const signedTextClass = (n: number | null | undefined) => {
-  const tone = signedTone(n)
-  if (tone === 'error') return 'text-error'
-  if (tone === 'warning') return 'text-warning'
-  return 'text-success'
+const purchaseModalTitle = computed(() =>
+  editingPurchase.value ? 'تعديل شراء' : 'إضافة شراء'
+)
+const transferModalTitle = computed(() =>
+  editingTransfer.value ? 'تعديل تحويل' : 'إضافة تحويل'
+)
+
+const deliveryDestinationLabel = (row: SupplierDelivery) => {
+  const isStore = row.destination_kind === 'store' || !!row.store_id
+  const place = isStore
+    ? (row.stores?.name || '—')
+    : (row.warehouses?.name || '—')
+  const section = !isStore ? (row.warehouse_sections?.name || '') : ''
+  const kind = isStore ? 'مخزن' : 'شونة'
+  return section ? `${kind}: ${place} / ${section}` : `${kind}: ${place}`
 }
 
-const onPurchaseKey = (e: KeyboardEvent) => {
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    void savePurchase()
-  } else if (e.key === 'Escape') {
-    cancelPurchaseInline()
-  }
-}
-
-const onTransferKey = (e: KeyboardEvent) => {
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    void saveTransfer()
-  } else if (e.key === 'Escape') {
-    cancelTransferInline()
-  }
-}
-
-const onDeliveryKey = (e: KeyboardEvent) => {
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    void saveDelivery()
-  } else if (e.key === 'Escape') {
-    cancelDeliveryInline()
-  }
-}
+const deliveryModalTitle = computed(() =>
+  editingDelivery.value ? 'تعديل تسليم' : 'إضافة تسليم'
+)
 </script>
 
 <template>
@@ -174,24 +129,39 @@ const onDeliveryKey = (e: KeyboardEvent) => {
           aria-label="رجوع"
         />
         <div class="min-w-0">
-          <h2 class="truncate text-2xl font-semibold tracking-tight text-highlighted">
-            <template v-if="supplier">
-              {{ supplier.name }}
-              - {{ accountTypeLabel(supplier.account_type_name) }}
-              <template v-if="selectedProductName && selectedProductName !== '—'">
-                - {{ selectedProductName }}
+          <h2 class="flex min-w-0 items-center gap-2 truncate text-2xl font-semibold tracking-tight text-highlighted">
+            <span
+              v-if="supplier"
+              class="inline-block size-3.5 shrink-0 rounded-full border border-default"
+              :style="{ backgroundColor: supplier.color || '#64748b' }"
+              :title="supplier.color || '#64748b'"
+            />
+            <span class="truncate">
+              <template v-if="supplier">
+                {{ supplier.name }}
+                - {{ accountTypeLabel(supplier.account_type_name) }}
+                <template v-if="selectedProductName && selectedProductName !== '—'">
+                  - {{ selectedProductName }}
+                </template>
               </template>
-            </template>
-            <template v-else>
-              كشف المورد
-            </template>
+              <template v-else>
+                كشف المورد
+              </template>
+            </span>
           </h2>
-          <p v-if="supplier?.notes" class="mt-1 truncate text-sm text-muted">
-            {{ supplier.notes }}
-          </p>
         </div>
       </div>
-
+      <div class="flex flex-wrap items-center gap-2">
+        <UButton
+          v-if="supplier"
+          size="sm"
+          variant="outline"
+          icon="i-lucide-pencil"
+          @click="openSupplierEdit"
+        >
+          تعديل المورد
+        </UButton>
+      </div>
     </div>
 
     <div v-if="loading">
@@ -200,7 +170,7 @@ const onDeliveryKey = (e: KeyboardEvent) => {
 
     <template v-else-if="!supplier">
       <UCard>
-        <p class="text-center text-muted py-6">
+        <p class="py-6 text-center text-muted">
           المورد غير موجود
         </p>
       </UCard>
@@ -208,1259 +178,528 @@ const onDeliveryKey = (e: KeyboardEvent) => {
 
     <template v-else>
       <div
-        class="relative flex min-h-0 flex-1 flex-col gap-4 transition-opacity duration-200"
+        class="relative flex min-h-0 flex-1 flex-col transition-opacity duration-200"
         :class="isRefreshing ? 'opacity-50 pointer-events-none' : 'opacity-100'"
         :aria-busy="isRefreshing"
       >
-      <div
-        v-if="isRefreshing"
-        class="pointer-events-none absolute inset-x-0 top-10 z-10 flex justify-center"
-      >
-        <div class="flex items-center gap-2 rounded-full border border-default bg-default/90 px-3 py-1.5 text-sm text-muted shadow-sm backdrop-blur-sm">
-          <UIcon
-            name="i-lucide-loader-circle"
-            class="size-4 animate-spin text-primary"
+        <div
+          v-if="isRefreshing"
+          class="pointer-events-none absolute inset-x-0 top-10 z-10 flex justify-center"
+        >
+          <div class="flex items-center gap-2 rounded-full border border-default bg-default/90 px-3 py-1.5 text-sm text-muted shadow-sm backdrop-blur-sm">
+            <UIcon
+              name="i-lucide-loader-circle"
+              class="size-4 animate-spin text-primary"
+            />
+            تحديث البيانات…
+          </div>
+        </div>
+
+        <div
+          v-if="!activeSeason"
+          class="shrink-0 rounded-lg bg-elevated/60 p-3 text-center text-sm text-muted"
+        >
+          لا يوجد موسم نشط — فعّل موسماً من شاشة المواسم أولاً.
+        </div>
+
+        <ClientOnly v-else>
+          <SupplierDetailWorkbook
+            :key="supplierId"
+            class="min-h-0 flex-1"
+            :supplier-id="supplierId"
+            :stats="supplierDetailStats"
+            :delivered-kg="deliveryTotals.kg"
+            :remaining-kg="selectedProductRemainingKg"
+            :purchases="filteredPurchases"
+            :transfers="filteredTransfers"
+            :deliveries="filteredDeliveries"
+            :running-avg-of="purchaseRunningAvgOf"
+            :transfer-kind-label="transferKindLabel"
+            :transfer-kind-options="transferKindOptions"
+            :destination-label="deliveryDestinationLabel"
+            :nolon-paid-of="nolonPaidOf"
+            :nolon-supplier-paid-of="nolonSupplierPaidOf"
+            :nolon-rest-of="nolonRestOf"
+            :nathriyat-paid-of="nathriyatPaidOf"
+            :nathriyat-supplier-paid-of="nathriyatSupplierPaidOf"
+            :nathriyat-rest-of="nathriyatRestOf"
+            :purchase-totals="purchaseTotals"
+            :transfer-totals="transferTotals"
+            :delivery-totals="deliveryTotals"
+            :commit-purchase-sheet="commitPurchaseSheet"
+            :commit-transfer-sheet="commitTransferSheet"
+            :commit-delivery-sheet="commitDeliverySheet"
+            :soft-delete-purchase="softDeletePurchase"
+            :soft-delete-transfer="softDeleteTransfer"
+            :soft-delete-delivery="softDeleteDelivery"
+            :open-purchase-create="openPurchaseCreate"
+            :open-purchase-edit="openPurchaseEdit"
+            :open-transfer-create="openTransferCreate"
+            :open-transfer-edit="openTransferEdit"
+            :open-delivery-edit="openDeliveryEdit"
+            :open-delivery-create="openDeliveryCreate"
           />
-          تحديث البيانات…
-        </div>
-      </div>
-      <div v-if="!activeSeason" class="shrink-0 rounded-lg bg-elevated/60 p-3 text-muted text-center text-sm">
-        لا يوجد موسم نشط — فعّل موسماً من شاشة المواسم أولاً.
-      </div>
-
-      <div
-        v-if="activeSeason"
-        class="shrink-0 overflow-x-auto tabular-nums py-1"
-      >
-        <div class="flex flex-nowrap items-stretch gap-x-6">
-          <!-- Group 1: quantities (per product) -->
-          <div class="flex flex-nowrap items-stretch gap-1.5 shrink-0">
-            <UCard class="min-w-28" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                مشترى
-              </p>
-              <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-                {{ formatNumber(supplierDetailStats.kg) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-28" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                مستلم
-              </p>
-              <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-                {{ formatNumber(deliveryTotals.kg) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-28" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                متبقي
-              </p>
-              <p
-                class="mt-0.5 text-base font-semibold tracking-tight"
-                :class="selectedProductRemainingKg < -0.001 ? 'text-error' : 'text-highlighted'"
-                dir="ltr"
-              >
-                {{ formatNumber(selectedProductRemainingKg) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-28" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                أردب
-              </p>
-              <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-                {{ formatNumber(supplierDetailStats.ardab) }}
-              </p>
-            </UCard>
-          </div>
-
-          <!-- Group 2: prices (per product) -->
-          <div class="flex flex-nowrap items-stretch gap-1.5 shrink-0">
-            <UCard class="min-w-32" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                متوسط الأردب
-              </p>
-              <p
-                class="mt-0.5 text-base font-semibold tracking-tight text-highlighted"
-                dir="ltr"
-                title="(مشتريات + نولون + نثريات) ÷ أردب لهذا الصنف"
-              >
-                {{ formatMoney(supplierDetailStats.avgPrice) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-28" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                آخر سعر
-              </p>
-              <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-                {{ formatMoney(supplierDetailStats.lastPrice) }}
-              </p>
-            </UCard>
-          </div>
-
-          <!-- Group 3: money + cost (supplier-wide except التكلفة) -->
-          <div class="flex flex-nowrap items-stretch gap-1.5 shrink-0">
-            <UCard class="min-w-36" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                التكلفة
-              </p>
-              <p
-                class="mt-0.5 text-base font-semibold tracking-tight text-highlighted"
-                dir="ltr"
-                title="مشتريات + نولون + نثريات لهذا الصنف"
-              >
-                {{ formatMoney(supplierDetailStats.costTotal) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-32" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                إجمالي المدفوع
-              </p>
-              <p class="mt-0.5 text-base font-semibold tracking-tight text-highlighted" dir="ltr">
-                {{ formatMoney(supplierDetailStats.paidTotal) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-32" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                مستحق المورد
-              </p>
-              <p
-                class="mt-0.5 text-base font-semibold tracking-tight"
-                :class="signedTextClass(supplierDetailStats.supplierDue)"
-                dir="ltr"
-              >
-                {{ formatMoney(supplierDetailStats.supplierDue) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-36" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                مستحق نولون/نثريات
-              </p>
-              <p
-                class="mt-0.5 text-base font-semibold tracking-tight"
-                :class="signedTextClass(supplierDetailStats.deliveryCostsDue)"
-                dir="ltr"
-              >
-                {{ formatMoney(supplierDetailStats.deliveryCostsDue) }}
-              </p>
-            </UCard>
-            <UCard class="min-w-36" :ui="statsCardUi">
-              <p class="text-xs font-medium text-muted">
-                الإجمالي المستحق
-              </p>
-              <p
-                class="mt-0.5 text-base font-semibold tracking-tight"
-                :class="signedTextClass(supplierDetailStats.grandDue)"
-                dir="ltr"
-              >
-                {{ formatMoney(supplierDetailStats.grandDue) }}
-              </p>
-            </UCard>
-          </div>
-        </div>
-      </div>
-
-      <!-- Excel-style ledger: fill remaining height; scroll Y per panel, X across panels -->
-      <div
-        v-if="activeSeason"
-        class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border-2 border-default bg-default"
-      >
-        <div :class="['flex min-h-0 flex-1 overflow-x-auto overscroll-x-contain', ledgerScrollClass]">
-          <div class="flex h-full min-h-0 w-max min-w-full items-stretch">
-          <!-- Purchases panel -->
-          <section :class="ledgerPanelClass">
-            <div :class="ledgerPanelHeaderClass">
-              <UButton
-                icon="i-lucide-plus"
-                size="xs"
-                square
-                aria-label="إضافة شراء"
-                :disabled="!activeSeason || isPurchaseCreating"
-                @click="openPurchaseCreate"
-              />
-              <div class="flex min-w-0 items-center gap-2">
-                <span class="h-4 w-1 shrink-0 rounded-full bg-warning" />
-                <p :class="ledgerPanelTitleClass">
-                  المشتريات
-                </p>
-                <UBadge size="sm" variant="subtle" color="warning">
-                  {{ filteredPurchases.length }}
-                </UBadge>
-              </div>
+          <template #fallback>
+            <SupplierDetailSkeleton />
+          </template>
+        </ClientOnly>
             </div>
-            <div :class="['min-h-0 flex-1 overflow-y-auto overflow-x-hidden', ledgerScrollClass]">
-              <table dir="rtl" :class="ledgerTableClass">
-                <thead class="sticky top-0 z-[2] bg-elevated text-muted shadow-sm">
-                  <tr>
-                    <th :class="ledgerThClass">
-                      التاريخ
-                    </th>
-                    <th :class="ledgerThClass">
-                      كجم
-                    </th>
-                    <th :class="ledgerThClass">
-                      أردب
-                    </th>
-                    <th :class="ledgerThClass">
-                      سعر
-                    </th>
-                    <th :class="ledgerThClass">
-                      متوسط
-                    </th>
-                    <th :class="ledgerThClass">
-                      الإجمالي
-                    </th>
-                    <th :class="ledgerThClass" />
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-if="isPurchaseCreating"
-                    class="border-t border-primary/30 bg-primary/5"
-                    @keydown="onPurchaseKey"
-                  >
-                    <td class="p-1">
-                      <UInput
-                        v-model="purchaseForm.purchase_date"
-                        type="date"
-                        size="sm"
-                        class="w-34"
-                        dir="ltr"
-                        :ui="cellInputUi"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <DecimalInput
-                        class="w-24"
-                        :model-value="purchaseForm.quantity_kg"
-                        placeholder="كجم"
-                        @update:model-value="setPurchaseDecimal('quantity_kg', $event)"
-                      />
-                    </td>
-                    <td class="p-1.5 text-muted tabular-nums text-end" dir="ltr">
-                      {{ formatNumber(computedPurchaseArdab) }}
-                    </td>
-                    <td class="p-1">
-                      <DecimalInput
-                        class="w-24"
-                        :model-value="purchaseForm.price_per_ardab"
-                        placeholder="سعر"
-                        @update:model-value="setPurchaseDecimal('price_per_ardab', $event)"
-                      />
-                    </td>
-                    <td class="p-1.5 text-muted tabular-nums text-end" dir="ltr" title="متوسط مرجح بعد هذا الصف">
-                      {{ formatMoney(computedPurchaseRunningAvg) }}
-                    </td>
-                    <td class="p-1.5 font-medium tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(computedPurchaseTotal) }}
-                    </td>
-                    <td class="p-1">
-                      <div class="flex justify-center gap-0.5">
-                        <UButton
-                          size="xs"
-                          variant="soft"
-                          icon="i-lucide-check"
-                          :loading="saving"
-                          @click="savePurchase"
-                        />
-                        <UButton
-                          size="xs"
-                          variant="ghost"
-                          color="neutral"
-                          icon="i-lucide-x"
-                          :disabled="saving"
-                          @click="cancelPurchaseInline"
-                        />
-                      </div>
-                    </td>
-                  </tr>
-
-                  <template v-for="row in filteredPurchases" :key="row.id">
-                    <tr
-                      v-if="isPurchaseRowEditing(row)"
-                      class="border-t border-primary/30 bg-primary/5"
-                      @keydown="onPurchaseKey"
-                    >
-                      <td class="p-1">
-                        <UInput
-                          v-model="purchaseForm.purchase_date"
-                          type="date"
-                          size="sm"
-                          class="w-34"
-                          dir="ltr"
-                          :ui="cellInputUi"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="purchaseForm.quantity_kg"
-                          @update:model-value="setPurchaseDecimal('quantity_kg', $event)"
-                        />
-                      </td>
-                      <td class="p-1.5 text-muted tabular-nums text-end" dir="ltr">
-                        {{ formatNumber(computedPurchaseArdab) }}
-                      </td>
-                      <td class="p-1">
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="purchaseForm.price_per_ardab"
-                          @update:model-value="setPurchaseDecimal('price_per_ardab', $event)"
-                        />
-                      </td>
-                      <td class="p-1.5 text-muted tabular-nums text-end" dir="ltr" title="متوسط مرجح بعد هذا الصف">
-                        {{ formatMoney(computedPurchaseRunningAvg) }}
-                      </td>
-                      <td class="p-1.5 font-medium tabular-nums text-end" dir="ltr">
-                        {{ formatMoney(computedPurchaseTotal) }}
-                      </td>
-                      <td class="p-1">
-                        <div class="flex justify-center gap-0.5">
-                          <UButton
-                            size="xs"
-                            variant="soft"
-                            icon="i-lucide-check"
-                            :loading="saving"
-                            @click="savePurchase"
-                          />
-                          <UButton
-                            size="xs"
-                            variant="ghost"
-                            color="neutral"
-                            icon="i-lucide-x"
-                            :disabled="saving"
-                            @click="cancelPurchaseInline"
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                    <tr
-                      v-else
-                      :class="['border-t border-default hover:bg-elevated/40', ledgerRowClass]"
-                    >
-                      <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                        {{ row.purchase_date }}
-                      </td>
-                      <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                        {{ formatNumber(row.quantity_kg) }}
-                      </td>
-                      <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                        {{ formatNumber(row.ardab) }}
-                      </td>
-                      <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                        {{ formatMoney(row.price_per_ardab) }}
-                      </td>
-                      <td class="p-2 align-middle text-muted tabular-nums text-end" dir="ltr" title="متوسط مرجح حتى هذا الشراء">
-                        {{ formatMoney(purchaseRunningAvgOf(row.id)) }}
-                      </td>
-                      <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                        {{ formatMoney(row.total_price) }}
-                      </td>
-                      <td class="p-1 align-middle">
-                        <div class="flex justify-center gap-0.5">
-                          <UButton
-                            size="xs"
-                            variant="ghost"
-                            icon="i-lucide-pencil"
-                            @click="openPurchaseEdit(row)"
-                          />
-                          <UButton
-                            size="xs"
-                            variant="ghost"
-                            color="error"
-                            icon="i-lucide-trash-2"
-                            :disabled="saving"
-                            @click="softDeletePurchase(row)"
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  </template>
-
-                  <tr v-if="!filteredPurchases.length && !isPurchaseCreating">
-                    <td colspan="7" class="border-t border-default p-6 text-center text-muted">
-                      لا توجد مشتريات لهذا الصنف — اضغط +
-                    </td>
-                  </tr>
-
-                  <!-- Empty bordered grid filling leftover height -->
-                  <tr class="h-full" aria-hidden="true">
-                    <td
-                      v-for="i in 7"
-                      :key="`purchase-fill-${i}`"
-                      :class="ledgerFillTdClass"
-                    />
-                  </tr>
-                </tbody>
-                <tfoot class="sticky bottom-0 z-[2]">
-                  <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
-                    <td :class="[ledgerTotalTdClass, 'text-muted']">
-                      <UTooltip text="صف مجاميع المشتريات لهذا الصنف في الموسم النشط">
-                        <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع كميات المشتريات بالكجم">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatNumber(purchaseTotals.kg) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع الأردب = كجم ÷ معامل الأردب">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatNumber(purchaseTotals.ardab) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="ledgerTotalTdClass" />
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="متوسط سعر الأردب المرجح لمشتريات هذا الصنف">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatMoney(purchaseTotals.avgPrice) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع قيمة المشتريات بالجنيه">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatMoney(purchaseTotals.price) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="ledgerTotalTdClass" />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </section>
-
-          <!-- Transfers / payments panel -->
-          <section :class="ledgerPanelClass">
-            <div :class="ledgerPanelHeaderClass">
-              <UButton
-                icon="i-lucide-plus"
-                size="xs"
-                square
-                aria-label="إضافة تحويل"
-                :disabled="!activeSeason || !canAddTransfer || isTransferCreating"
-                @click="openTransferCreate"
-              />
-              <div class="flex min-w-0 items-center gap-2">
-                <span class="h-4 w-1 shrink-0 rounded-full bg-warning" />
-                <p :class="ledgerPanelTitleClass">
-                  التحويلات
-                </p>
-                <UBadge size="sm" variant="subtle" color="warning">
-                  {{ filteredTransfers.length }}
-                </UBadge>
-              </div>
-            </div>
-            <div :class="['min-h-0 flex-1 overflow-y-auto overflow-x-hidden', ledgerScrollClass]">
-              <table dir="rtl" :class="ledgerTableClass">
-                <thead class="sticky top-0 z-[2] bg-elevated text-muted shadow-sm">
-                  <tr>
-                    <th :class="ledgerThClass">
-                      التاريخ
-                    </th>
-                    <th :class="ledgerThClass">
-                      النوع
-                    </th>
-                    <th :class="ledgerThClass">
-                      المبلغ
-                    </th>
-                    <th :class="ledgerNotesThClass">
-                      البيان
-                    </th>
-                    <th :class="ledgerThClass" />
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-if="isTransferCreating"
-                    class="border-t border-primary/30 bg-primary/5"
-                    @keydown="onTransferKey"
-                  >
-                    <td class="p-1">
-                      <UInput
-                        v-model="transferForm.transfer_date"
-                        type="date"
-                        size="sm"
-                        class="w-34"
-                        dir="ltr"
-                        :ui="cellInputUi"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <USelect
-                        v-model="transferForm.kind"
-                        :items="transferKindOptions"
-                        value-key="value"
-                        label-key="label"
-                        size="sm"
-                        class="w-28"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <DecimalInput
-                        class="w-24"
-                        :model-value="transferForm.amount"
-                        placeholder="مبلغ"
-                        @update:model-value="setTransferDecimal('amount', $event)"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <UInput
-                        v-model="transferForm.notes"
-                        size="sm"
-                        class="w-32"
-                        placeholder="بيان"
-                        :ui="cellInputUi"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <div class="flex justify-center gap-0.5">
-                        <UButton
-                          size="xs"
-                          variant="soft"
-                          icon="i-lucide-check"
-                          :loading="saving"
-                          @click="saveTransfer"
-                        />
-                        <UButton
-                          size="xs"
-                          variant="ghost"
-                          color="neutral"
-                          icon="i-lucide-x"
-                          :disabled="saving"
-                          @click="cancelTransferInline"
-                        />
-                      </div>
-                    </td>
-                  </tr>
-
-                  <template v-for="row in filteredTransfers" :key="row.id">
-                    <tr
-                      v-if="isTransferRowEditing(row)"
-                      class="border-t border-primary/30 bg-primary/5"
-                      @keydown="onTransferKey"
-                    >
-                      <td class="p-1">
-                        <UInput
-                          v-model="transferForm.transfer_date"
-                          type="date"
-                          size="sm"
-                          class="w-34"
-                          dir="ltr"
-                          :ui="cellInputUi"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <USelect
-                          v-model="transferForm.kind"
-                          :items="transferKindOptions"
-                          value-key="value"
-                          label-key="label"
-                          size="sm"
-                          class="w-28"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="transferForm.amount"
-                          @update:model-value="setTransferDecimal('amount', $event)"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <UInput
-                          v-model="transferForm.notes"
-                          size="sm"
-                          class="w-32"
-                          :ui="cellInputUi"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <div class="flex justify-center gap-0.5">
-                          <UButton
-                            size="xs"
-                            variant="soft"
-                            icon="i-lucide-check"
-                            :loading="saving"
-                            @click="saveTransfer"
-                          />
-                          <UButton
-                            size="xs"
-                            variant="ghost"
-                            color="neutral"
-                            icon="i-lucide-x"
-                            :disabled="saving"
-                            @click="cancelTransferInline"
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                    <tr
-                      v-else
-                      :class="['border-t border-default hover:bg-elevated/40', ledgerRowClass]"
-                    >
-                      <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                        {{ row.transfer_date }}
-                      </td>
-                      <td class="p-2 align-middle">
-                        <UBadge
-                          size="sm"
-                          :color="row.kind === 'settlement' ? 'warning' : row.kind === 'commission' ? 'success' : 'primary'"
-                          variant="subtle"
-                        >
-                          {{ transferKindLabel(row.kind) }}
-                        </UBadge>
-                      </td>
-                      <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                        {{ formatMoney(row.amount) }}
-                      </td>
-                      <td :class="ledgerNotesTdClass" :title="row.notes || ''">
-                        {{ row.notes || '—' }}
-                      </td>
-                      <td class="p-1 align-middle">
-                        <div class="flex justify-center gap-0.5">
-                          <UButton
-                            size="xs"
-                            variant="ghost"
-                            icon="i-lucide-pencil"
-                            @click="openTransferEdit(row)"
-                          />
-                          <UButton
-                            size="xs"
-                            variant="ghost"
-                            color="error"
-                            icon="i-lucide-trash-2"
-                            :disabled="saving"
-                            @click="softDeleteTransfer(row)"
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  </template>
-
-                  <tr v-if="!filteredTransfers.length && !isTransferCreating">
-                    <td colspan="5" class="border-t border-default p-6 text-center text-muted">
-                      لا توجد تحويلات لهذا الصنف
-                    </td>
-                  </tr>
-
-                  <tr class="h-full" aria-hidden="true">
-                    <td
-                      v-for="i in 5"
-                      :key="`transfer-fill-${i}`"
-                      :class="ledgerFillTdClass"
-                    />
-                  </tr>
-                </tbody>
-                <tfoot class="sticky bottom-0 z-[2]">
-                  <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
-                    <td :class="[ledgerTotalTdClass, 'text-muted']">
-                      <UTooltip text="صف مجاميع التحويلات لهذا المورد في الموسم النشط">
-                        <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'text-muted']">
-                      <UTooltip text="عدد التحويلات المسجّلة">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ transferTotals.count }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع مبالغ التحويلات والعمولة بالجنيه">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatMoney(transferTotals.amount) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="ledgerTotalTdClass" />
-                    <td :class="ledgerTotalTdClass" />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </section>
-
-          <!-- Deliveries panel -->
-          <section :class="ledgerPanelClass">
-            <div :class="ledgerPanelHeaderClass">
-              <UButton
-                icon="i-lucide-plus"
-                size="xs"
-                square
-                aria-label="إضافة تسليم"
-                :disabled="!activeSeason || !canAddDelivery || isDeliveryCreating"
-                @click="openDeliveryCreate"
-              />
-              <div class="flex min-w-0 items-center gap-2">
-                <span class="h-4 w-1 shrink-0 rounded-full bg-warning" />
-                <p :class="ledgerPanelTitleClass">
-                  التسليمات
-                </p>
-                <UBadge size="sm" variant="subtle" color="warning">
-                  {{ filteredDeliveries.length }}
-                </UBadge>
-              </div>
-            </div>
-            <div :class="['min-h-0 flex-1 overflow-y-auto overflow-x-hidden', ledgerScrollClass]">
-              <table dir="rtl" :class="ledgerTableClass">
-                <thead class="sticky top-0 z-[2] bg-elevated text-muted shadow-sm">
-                  <tr>
-                    <th :class="ledgerThClass">
-                      التاريخ
-                    </th>
-                    <th :class="ledgerThClass">
-                      الوجهة
-                    </th>
-                    <th :class="ledgerThClass">
-                      الموقع
-                    </th>
-                    <th :class="ledgerThClass">
-                      الربع
-                    </th>
-                    <th :class="ledgerThClass" title="كجم مطلوب قبل هذه النقلة">
-                      مطلوب قبل
-                    </th>
-                    <th :class="ledgerThClass" title="الكمية المستلمة">
-                      كجم
-                    </th>
-                    <th :class="ledgerThClass" title="كجم مطلوب بعد هذه النقلة">
-                      مطلوب بعد
-                    </th>
-                    <th :class="ledgerThClass">
-                      نولون
-                    </th>
-                    <th :class="ledgerThClass">
-                      نثريات
-                    </th>
-                    <th :class="ledgerThClass" title="نولون + نثريات">
-                      الإجمالي
-                    </th>
-                    <th :class="ledgerThClass" title="مدفوع نولون + نثريات">
-                      المدفوع
-                    </th>
-                    <th :class="ledgerThClass" title="المطلوب = الإجمالي − المدفوع">
-                      المطلوب
-                    </th>
-                    <th :class="ledgerThClass">
-                      سيارة
-                    </th>
-                    <th :class="ledgerThClass" />
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-if="isDeliveryCreating"
-                    class="border-t border-primary/30 bg-primary/5"
-                    @keydown="onDeliveryKey"
-                  >
-                    <td class="p-1">
-                      <UInput
-                        v-model="deliveryForm.delivery_date"
-                        type="date"
-                        size="sm"
-                        class="w-34"
-                        dir="ltr"
-                        :ui="cellInputUi"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <USelect
-                        v-model="deliveryForm.destination_kind"
-                        :items="deliveryDestinationOptions"
-                        value-key="value"
-                        label-key="label"
-                        size="sm"
-                        class="w-28"
-                        @update:model-value="onDeliveryDestinationChange"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <USelect
-                        v-if="deliveryForm.destination_kind === 'warehouse'"
-                        v-model="deliveryForm.warehouse_id"
-                        :items="warehouseOptions"
-                        value-key="value"
-                        label-key="label"
-                        size="sm"
-                        class="w-32"
-                        @update:model-value="onDeliveryWarehouseChange"
-                      />
-                      <USelect
-                        v-else
-                        v-model="deliveryForm.store_id"
-                        :items="storeOptions"
-                        value-key="value"
-                        label-key="label"
-                        size="sm"
-                        class="w-32"
-                        placeholder="المخزن"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <USelect
-                        v-if="deliveryForm.destination_kind === 'warehouse'"
-                        v-model="deliveryForm.section_id"
-                        :items="sectionOptions"
-                        value-key="value"
-                        label-key="label"
-                        size="sm"
-                        class="w-28"
-                        placeholder="الربع"
-                      />
-                      <span
-                        v-else
-                        class="text-muted text-xs"
-                      >—</span>
-                    </td>
-                    <td class="p-1.5 tabular-nums text-end" dir="ltr">
-                      {{ formatNumber(deliveryCreateKgRunning.before) }}
-                    </td>
-                    <td class="p-1">
-                      <DecimalInput
-                        class="w-24"
-                        :model-value="deliveryForm.quantity_kg"
-                        placeholder="كجم"
-                        :title="`الحد الأقصى: ${formatNumber(deliveryMaxKgAllowed)} كجم`"
-                        @update:model-value="setDeliveryDecimal('quantity_kg', $event)"
-                      />
-                    </td>
-                    <td class="p-1.5 tabular-nums text-end" dir="ltr">
-                      {{ formatNumber(deliveryCreateKgRunning.after) }}
-                    </td>
-                    <td class="p-1">
-                      <DecimalInput
-                        class="w-24"
-                        :model-value="deliveryForm.nolon_total"
-                        :placeholder="`×${nolonRatePerTon}`"
-                        :title="nolonManualOverride ? 'معدّل يدوياً' : `تلقائي: طن × ${nolonRatePerTon} (يمكن التعديل)`"
-                        @update:model-value="setDeliveryDecimal('nolon_total', $event)"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <DecimalInput
-                        class="w-24"
-                        :model-value="deliveryForm.nathriyat_total"
-                        placeholder="0"
-                        @update:model-value="setDeliveryDecimal('nathriyat_total', $event)"
-                      />
-                    </td>
-                    <td class="p-1.5 tabular-nums text-end" dir="ltr">
-                      {{ formatMoney(deliveryFormCostBundle.total) }}
-                    </td>
-                    <td class="p-1">
-                      <div class="flex flex-col gap-0.5">
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="deliveryForm.nolon_paid"
-                          placeholder="نولون"
-                          title="مدفوع نولون"
-                          @update:model-value="setDeliveryDecimal('nolon_paid', $event)"
-                        />
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="deliveryForm.nathriyat_paid"
-                          placeholder="نثريات"
-                          title="مدفوع نثريات"
-                          @update:model-value="setDeliveryDecimal('nathriyat_paid', $event)"
-                        />
-                      </div>
-                    </td>
-                    <td class="p-1.5">
-                      <UBadge size="sm" :color="signedTone(deliveryFormCostBundle.needed)" variant="subtle">
-                        <span dir="ltr">{{ formatMoney(deliveryFormCostBundle.needed) }}</span>
-                      </UBadge>
-                    </td>
-                    <td class="p-1">
-                      <UInput
-                        v-model="deliveryForm.vehicle_number"
-                        size="sm"
-                        class="w-24"
-                        placeholder="—"
-                        :ui="cellInputUi"
-                      />
-                    </td>
-                    <td class="p-1">
-                      <div class="flex justify-center gap-0.5">
-                        <UButton
-                          size="xs"
-                          variant="soft"
-                          icon="i-lucide-check"
-                          :loading="saving"
-                          @click="saveDelivery"
-                        />
-                        <UButton
-                          size="xs"
-                          variant="ghost"
-                          color="neutral"
-                          icon="i-lucide-x"
-                          :disabled="saving"
-                          @click="cancelDeliveryInline"
-                        />
-                      </div>
-                    </td>
-                  </tr>
-
-                  <template v-for="row in filteredDeliveries" :key="row.id">
-                    <tr
-                      v-if="isDeliveryRowEditing(row)"
-                      class="border-t border-primary/30 bg-primary/5"
-                      @keydown="onDeliveryKey"
-                    >
-                      <td class="p-1">
-                        <UInput
-                          v-model="deliveryForm.delivery_date"
-                          type="date"
-                          size="sm"
-                          class="w-34"
-                          dir="ltr"
-                          :ui="cellInputUi"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <USelect
-                          v-model="deliveryForm.destination_kind"
-                          :items="deliveryDestinationOptions"
-                          value-key="value"
-                          label-key="label"
-                          size="sm"
-                          class="w-28"
-                          @update:model-value="onDeliveryDestinationChange"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <USelect
-                          v-if="deliveryForm.destination_kind === 'warehouse'"
-                          v-model="deliveryForm.warehouse_id"
-                          :items="warehouseOptions"
-                          value-key="value"
-                          label-key="label"
-                          size="sm"
-                          class="w-32"
-                          @update:model-value="onDeliveryWarehouseChange"
-                        />
-                        <USelect
-                          v-else
-                          v-model="deliveryForm.store_id"
-                          :items="storeOptions"
-                          value-key="value"
-                          label-key="label"
-                          size="sm"
-                          class="w-32"
-                          placeholder="المخزن"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <USelect
-                          v-if="deliveryForm.destination_kind === 'warehouse'"
-                          v-model="deliveryForm.section_id"
-                          :items="sectionOptions"
-                          value-key="value"
-                          label-key="label"
-                          size="sm"
-                          class="w-28"
-                          placeholder="الربع"
-                        />
-                        <span
-                          v-else
-                          class="text-muted text-xs"
-                        >—</span>
-                      </td>
-                      <td class="p-1.5 tabular-nums text-end" dir="ltr">
-                        {{ formatNumber(deliveryKgRunningOf(row.id).before) }}
-                      </td>
-                      <td class="p-1">
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="deliveryForm.quantity_kg"
-                          :title="`الحد الأقصى: ${formatNumber(deliveryMaxKgAllowed)} كجم`"
-                          @update:model-value="setDeliveryDecimal('quantity_kg', $event)"
-                        />
-                      </td>
-                      <td class="p-1.5 tabular-nums text-end" dir="ltr">
-                        {{ formatNumber(deliveryKgRunningOf(row.id).after) }}
-                      </td>
-                      <td class="p-1">
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="deliveryForm.nolon_total"
-                          :placeholder="`×${nolonRatePerTon}`"
-                          :title="nolonManualOverride ? 'معدّل يدوياً' : `تلقائي: طن × ${nolonRatePerTon} (يمكن التعديل)`"
-                          @update:model-value="setDeliveryDecimal('nolon_total', $event)"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <DecimalInput
-                          class="w-24"
-                          :model-value="deliveryForm.nathriyat_total"
-                          @update:model-value="setDeliveryDecimal('nathriyat_total', $event)"
-                        />
-                      </td>
-                      <td class="p-1.5 tabular-nums text-end" dir="ltr">
-                        {{ formatMoney(deliveryFormCostBundle.total) }}
-                      </td>
-                      <td class="p-1">
-                        <div class="flex flex-col gap-0.5">
-                          <DecimalInput
-                            class="w-24"
-                            :model-value="deliveryForm.nolon_paid"
-                            placeholder="نولون"
-                            title="مدفوع نولون"
-                            @update:model-value="setDeliveryDecimal('nolon_paid', $event)"
-                          />
-                          <DecimalInput
-                            class="w-24"
-                            :model-value="deliveryForm.nathriyat_paid"
-                            placeholder="نثريات"
-                            title="مدفوع نثريات"
-                            @update:model-value="setDeliveryDecimal('nathriyat_paid', $event)"
-                          />
-                        </div>
-                      </td>
-                      <td class="p-1.5">
-                        <UBadge size="sm" :color="signedTone(deliveryFormCostBundle.needed)" variant="subtle">
-                          <span dir="ltr">{{ formatMoney(deliveryFormCostBundle.needed) }}</span>
-                        </UBadge>
-                      </td>
-                      <td class="p-1">
-                        <UInput
-                          v-model="deliveryForm.vehicle_number"
-                          size="sm"
-                          class="w-24"
-                          :ui="cellInputUi"
-                        />
-                      </td>
-                      <td class="p-1">
-                        <div class="flex justify-center gap-0.5">
-                          <UButton
-                            size="xs"
-                            variant="soft"
-                            icon="i-lucide-check"
-                            :loading="saving"
-                            @click="saveDelivery"
-                          />
-                          <UButton
-                            size="xs"
-                            variant="ghost"
-                            color="neutral"
-                            icon="i-lucide-x"
-                            :disabled="saving"
-                            @click="cancelDeliveryInline"
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                    <template v-else>
-                      <tr :class="['border-t border-default hover:bg-elevated/40', ledgerRowClass]">
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ row.delivery_date }}
-                        </td>
-                        <td class="p-2 align-middle">
-                          <UBadge
-                            size="sm"
-                            variant="subtle"
-                            :color="row.destination_kind === 'store' || row.store_id ? 'primary' : 'warning'"
-                          >
-                            {{ row.destination_kind === 'store' || row.store_id ? 'مخزن' : 'شونة' }}
-                          </UBadge>
-                        </td>
-                        <td class="p-2 align-middle">
-                          {{
-                            row.destination_kind === 'store' || row.store_id
-                              ? (row.stores?.name || '—')
-                              : (row.warehouses?.name || '—')
-                          }}
-                        </td>
-                        <td class="p-2 align-middle">
-                          {{
-                            row.destination_kind === 'store' || row.store_id
-                              ? '—'
-                              : (row.warehouse_sections?.name || '—')
-                          }}
-                        </td>
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ formatNumber(deliveryKgRunningOf(row.id).before) }}
-                        </td>
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ formatNumber(row.quantity_kg) }}
-                        </td>
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ formatNumber(deliveryKgRunningOf(row.id).after) }}
-                        </td>
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ formatMoney(row.nolon_total) }}
-                        </td>
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ formatMoney(row.nathriyat_total) }}
-                        </td>
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ formatMoney(deliveryCostBundleOf(row).total) }}
-                        </td>
-                        <td class="p-2 align-middle tabular-nums text-end" dir="ltr">
-                          {{ formatMoney(deliveryCostBundleOf(row).paid) }}
-                        </td>
-                        <td class="p-2 align-middle">
-                          <UBadge size="sm" :color="signedTone(deliveryCostBundleOf(row).needed)" variant="subtle">
-                            <span dir="ltr">{{ formatMoney(deliveryCostBundleOf(row).needed) }}</span>
-                          </UBadge>
-                        </td>
-                        <td class="p-2 align-middle text-muted">
-                          {{ row.vehicle_number || '—' }}
-                        </td>
-                        <td class="p-1 align-middle">
-                          <div class="flex flex-nowrap justify-center gap-0.5">
-                            <UButton
-                              v-if="nolonRestOf(row) > 0"
-                              size="xs"
-                              variant="soft"
-                              @click="openDeliveryPay(row, 'nolon')"
-                            >
-                              نولون
-                            </UButton>
-                            <UButton
-                              v-if="nathriyatRestOf(row) > 0"
-                              size="xs"
-                              variant="soft"
-                              color="neutral"
-                              @click="openDeliveryPay(row, 'nathriyat')"
-                            >
-                              نثريات
-                            </UButton>
-                            <UButton
-                              size="xs"
-                              variant="ghost"
-                              icon="i-lucide-pencil"
-                              @click="openDeliveryEdit(row)"
-                            />
-                            <UButton
-                              size="xs"
-                              variant="ghost"
-                              color="error"
-                              icon="i-lucide-trash-2"
-                              :disabled="saving"
-                              @click="softDeleteDelivery(row)"
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    </template>
-                  </template>
-
-                  <tr v-if="!filteredDeliveries.length && !isDeliveryCreating">
-                    <td colspan="14" class="border-t border-default p-6 text-center text-muted">
-                      لا توجد تسليمات لهذا الصنف
-                    </td>
-                  </tr>
-
-                  <tr class="h-full" aria-hidden="true">
-                    <td
-                      v-for="i in 14"
-                      :key="`delivery-fill-${i}`"
-                      :class="ledgerFillTdClass"
-                    />
-                  </tr>
-                </tbody>
-                <tfoot class="sticky bottom-0 z-[2]">
-                  <tr class="font-semibold shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.18)] dark:shadow-[0_-4px_12px_-6px_rgba(0,0,0,0.45)]">
-                    <td :class="[ledgerTotalTdClass, 'text-muted']">
-                      <UTooltip text="صف مجاميع التسليمات لهذا الصنف في الموسم النشط">
-                        <span class="cursor-help border-b border-dotted border-muted">الإجمالي</span>
-                      </UTooltip>
-                    </td>
-                    <td :class="ledgerTotalTdClass" />
-                    <td :class="ledgerTotalTdClass" />
-                    <td :class="ledgerTotalTdClass" />
-                    <td :class="ledgerTotalTdClass" />
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع الكميات المستلمة بالكجم">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatNumber(deliveryTotals.kg) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="المتبقي من كجم المشتريات بعد كل التسليمات">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatNumber(deliveryKgRemainingFinal) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع نولون كل التسليمات">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatMoney(deliveryTotals.nolon) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع نثريات كل التسليمات">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatMoney(deliveryTotals.nathriyat) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="إجمالي تكاليف التسليم = نولون + نثريات">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatMoney(deliveryTotals.costTotal) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="[ledgerTotalTdClass, 'tabular-nums text-end']" dir="ltr">
-                      <UTooltip text="مجموع المدفوع من نولون ونثريات">
-                        <span class="cursor-help border-b border-dotted border-muted">
-                          {{ formatMoney(deliveryTotals.costPaid) }}
-                        </span>
-                      </UTooltip>
-                    </td>
-                    <td :class="ledgerTotalTdClass">
-                      <UTooltip text="المتبقي للدفع = إجمالي التكاليف − المدفوع">
-                        <UBadge size="sm" :color="signedTone(deliveryTotals.costNeeded)" variant="subtle" class="cursor-help">
-                          <span dir="ltr">{{ formatMoney(deliveryTotals.costNeeded) }}</span>
-                        </UBadge>
-                      </UTooltip>
-                    </td>
-                    <td :class="ledgerTotalTdClass" />
-                    <td :class="ledgerTotalTdClass" />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </section>
-          </div>
-        </div>
-      </div>
-      </div>
     </template>
 
-    <UModal v-model:open="supplierEditModalOpen" title="تعديل المورد">
+    <UModal
+      v-model:open="supplierEditModalOpen"
+      title="تعديل المورد"
+    >
       <template #body>
         <div class="space-y-4">
-          <UFormField label="الاسم" required>
-            <UInput
+          <UFormField
+            label="الاسم"
+            required
+          >
+                          <UInput
               v-model="supplierEditForm.name"
               class="w-full"
               placeholder="مثال: شركة أحمد / استثمار محمود"
             />
           </UFormField>
-          <UFormField label="النوع" required>
+          <UFormField
+            label="النوع"
+            required
+          >
             <AccountTypeField v-model="supplierEditForm.account_type_id" />
           </UFormField>
-          <UFormField label="ملاحظات">
-            <UTextarea v-model="supplierEditForm.notes" class="w-full" :rows="3" />
+          <UFormField
+            label="معامل الأردب (كجم)"
+            required
+          >
+            <DecimalInput
+              :model-value="supplierEditForm.ardab_factor"
+              class="w-full"
+              @update:model-value="supplierEditForm.ardab_factor = $event"
+            />
+          </UFormField>
+          <UFormField label="لون الملف">
+            <div class="flex items-center gap-3">
+              <input
+                v-model="supplierEditForm.color"
+                type="color"
+                class="size-10 cursor-pointer rounded-md border border-default bg-transparent p-1"
+                :title="supplierEditForm.color"
+              >
+              <UInput
+                v-model="supplierEditForm.color"
+                class="w-full font-mono uppercase"
+                dir="ltr"
+                placeholder="#64748B"
+                maxlength="7"
+              />
+            </div>
           </UFormField>
         </div>
       </template>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="outline" @click="supplierEditModalOpen = false">
+          <UButton
+            color="neutral"
+            variant="outline"
+            @click="supplierEditModalOpen = false"
+          >
             إلغاء
           </UButton>
-          <UButton :loading="saving" @click="saveSupplierEdit">
+                            <UButton
+                              :loading="saving"
+            @click="saveSupplierEdit"
+          >
+            حفظ
+          </UButton>
+                          </div>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="purchaseInlineOpen"
+      :title="purchaseModalTitle"
+      :ui="{ content: 'sm:max-w-3xl' }"
+      @update:open="(v: boolean) => { if (!v) cancelPurchaseInline() }"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <UFormField
+            label="التاريخ"
+            required
+            size="xl"
+            :ui="{ label: 'text-lg' }"
+          >
+            <UInput
+              v-model="purchaseForm.purchase_date"
+              type="date"
+              size="xl"
+              class="w-full"
+              dir="ltr"
+            />
+          </UFormField>
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField
+              label="كجم"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="purchaseForm.quantity_kg"
+                size="xl"
+                @update:model-value="setPurchaseDecimal('quantity_kg', $event)"
+              />
+            </UFormField>
+            <UFormField
+              label="سعر الأردب"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="purchaseForm.price_per_ardab"
+                size="xl"
+                @update:model-value="setPurchaseDecimal('price_per_ardab', $event)"
+              />
+            </UFormField>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField
+              :label="`أردب (محسوب ÷ ${formatNumber(supplierArdabFactor)})`"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <UInput
+                :model-value="formatNumber(computedPurchaseArdab)"
+                size="xl"
+                class="w-full"
+                disabled
+                dir="ltr"
+              />
+            </UFormField>
+            <UFormField
+              label="الإجمالي (محسوب)"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <UInput
+                :model-value="formatMoney(computedPurchaseTotal)"
+                size="xl"
+                class="w-full"
+                disabled
+                dir="ltr"
+              />
+            </UFormField>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+                              <UButton
+                                color="neutral"
+            variant="outline"
+                                @click="cancelPurchaseInline"
+          >
+            إلغاء
+          </UButton>
+                              <UButton
+            :loading="saving"
+            @click="savePurchase"
+          >
+            حفظ
+          </UButton>
+                            </div>
+                      </template>
+    </UModal>
+
+    <UModal
+      :open="transferInlineOpen"
+      :title="transferModalTitle"
+      :ui="{ content: 'sm:max-w-3xl' }"
+      @update:open="(v: boolean) => { if (!v) cancelTransferInline() }"
+    >
+      <template #body>
+        <div class="grid grid-cols-3 gap-3">
+          <UFormField
+            label="التاريخ"
+            required
+            size="xl"
+            :ui="{ label: 'text-lg' }"
+          >
+            <UInput
+              v-model="transferForm.transfer_date"
+              type="date"
+              size="xl"
+              class="w-full"
+              dir="ltr"
+            />
+          </UFormField>
+          <UFormField
+            label="النوع"
+            required
+            size="xl"
+            :ui="{ label: 'text-lg' }"
+          >
+            <USelect
+              v-model="transferForm.kind"
+              :items="transferKindOptions"
+              value-key="value"
+              label-key="label"
+              size="xl"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField
+            label="المبلغ"
+            required
+            size="xl"
+            :ui="{ label: 'text-lg' }"
+          >
+            <DecimalInput
+              :model-value="transferForm.amount"
+              size="xl"
+              @update:model-value="setTransferDecimal('amount', $event)"
+            />
+          </UFormField>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton
+            color="neutral"
+            variant="outline"
+            @click="cancelTransferInline"
+          >
+            إلغاء
+          </UButton>
+          <UButton
+            :loading="saving"
+            @click="saveTransfer"
+          >
+            حفظ
+          </UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="deliveryInlineOpen"
+      :title="deliveryModalTitle"
+      :ui="{ content: 'sm:max-w-4xl' }"
+      @update:open="(v: boolean) => { if (!v) cancelDeliveryInline() }"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <UFormField
+            label="التاريخ"
+            required
+            size="xl"
+            :ui="{ label: 'text-lg' }"
+          >
+            <UInput
+              v-model="deliveryForm.delivery_date"
+              type="date"
+              size="xl"
+              class="w-full"
+              dir="ltr"
+            />
+          </UFormField>
+
+          <div class="grid grid-cols-3 gap-3">
+            <UFormField
+              label="الوجهة"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelect
+                v-model="deliveryForm.destination_kind"
+                :items="deliveryDestinationOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                @update:model-value="onDeliveryDestinationChange"
+              />
+            </UFormField>
+            <UFormField
+              v-if="deliveryForm.destination_kind === 'warehouse'"
+              label="الشونة"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelectMenu
+                v-model="deliveryForm.warehouse_id"
+                :items="warehouseOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                @update:model-value="onDeliveryWarehouseChange"
+              />
+            </UFormField>
+            <UFormField
+              v-if="deliveryForm.destination_kind === 'warehouse'"
+              label="ربع"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelectMenu
+                v-model="deliveryForm.section_id"
+                :items="sectionOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField
+              v-if="deliveryForm.destination_kind === 'store'"
+              label="المخزن"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelectMenu
+                v-model="deliveryForm.store_id"
+                :items="storeOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                @update:model-value="onDeliveryStoreChange"
+              />
+            </UFormField>
+            <UFormField
+              v-if="deliveryForm.destination_kind === 'store'"
+              label="خانة"
+              required
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <USelectMenu
+                v-model="deliveryForm.store_slot_id"
+                :items="storeSlotOptions"
+                value-key="value"
+                label-key="label"
+                size="xl"
+                class="w-full"
+                :placeholder="storeSlotOptions.length ? 'اختر الخانة' : 'لا توجد خانات'"
+              />
+            </UFormField>
+          </div>
+
+          <UFormField
+            label="كجم"
+            required
+            size="xl"
+            :ui="{ label: 'text-lg' }"
+          >
+            <DecimalInput
+              :model-value="deliveryForm.quantity_kg"
+              size="xl"
+              :title="`يمكن استلام من المورد: ${formatNumber(deliveryMaxKgAllowed)} كجم`"
+              @update:model-value="setDeliveryDecimal('quantity_kg', $event)"
+            />
+            <p class="mt-1 text-sm text-muted">
+              يمكن استلام من المورد:
+              <span
+                dir="ltr"
+                class="font-medium text-highlighted"
+              >{{ formatNumber(deliveryMaxKgAllowed) }}</span>
+              كجم
+            </p>
+          </UFormField>
+
+          <div class="grid grid-cols-3 gap-3">
+            <UFormField
+              label="نولون"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="deliveryForm.nolon_total"
+                size="xl"
+                @update:model-value="setDeliveryDecimal('nolon_total', $event)"
+              />
+            </UFormField>
+            <UFormField
+              label="مدفوع منا (نولون)"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="deliveryForm.nolon_paid"
+                size="xl"
+                @update:model-value="setDeliveryDecimal('nolon_paid', $event)"
+              />
+            </UFormField>
+            <UFormField
+              label="نولون طرف المورد"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="deliveryForm.nolon_supplier_paid"
+                size="xl"
+                @update:model-value="setDeliveryDecimal('nolon_supplier_paid', $event)"
+              />
+            </UFormField>
+          </div>
+
+          <div class="grid grid-cols-3 gap-3">
+            <UFormField
+              label="نثريات"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="deliveryForm.nathriyat_total"
+                size="xl"
+                @update:model-value="setDeliveryDecimal('nathriyat_total', $event)"
+              />
+            </UFormField>
+            <UFormField
+              label="مدفوع منا (نثريات)"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="deliveryForm.nathriyat_paid"
+                size="xl"
+                @update:model-value="setDeliveryDecimal('nathriyat_paid', $event)"
+              />
+            </UFormField>
+            <UFormField
+              label="نثريات طرف المورد"
+              size="xl"
+              :ui="{ label: 'text-lg' }"
+            >
+              <DecimalInput
+                :model-value="deliveryForm.nathriyat_supplier_paid"
+                size="xl"
+                @update:model-value="setDeliveryDecimal('nathriyat_supplier_paid', $event)"
+              />
+            </UFormField>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton
+            color="neutral"
+            variant="outline"
+            @click="cancelDeliveryInline"
+          >
+            إلغاء
+          </UButton>
+          <UButton
+            :loading="saving"
+            @click="saveDelivery"
+          >
             حفظ
           </UButton>
         </div>
@@ -1473,16 +712,31 @@ const onDeliveryKey = (e: KeyboardEvent) => {
     >
       <template #body>
         <div class="space-y-4">
-          <div class="rounded-lg bg-elevated/60 px-3 py-2 text-sm flex flex-wrap items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2 rounded-lg bg-elevated/60 px-3 py-2 text-sm">
             <span class="text-muted">الباقي:</span>
-            <UBadge size="lg" :color="signedTone(paymentRemaining)" variant="subtle">
+            <UBadge
+              size="lg"
+              :color="signedTone(paymentRemaining)"
+              variant="subtle"
+            >
               <span dir="ltr">{{ formatMoney(paymentRemaining) }}</span>
             </UBadge>
           </div>
-          <UFormField label="التاريخ" required>
-            <UInput v-model="paymentForm.payment_date" type="date" class="w-full" dir="ltr" />
+          <UFormField
+            label="التاريخ"
+            required
+          >
+            <UInput
+              v-model="paymentForm.payment_date"
+              type="date"
+              class="w-full"
+              dir="ltr"
+            />
           </UFormField>
-          <UFormField label="المبلغ" required>
+          <UFormField
+            label="المبلغ"
+            required
+          >
             <DecimalInput
               :model-value="paymentForm.amount"
               placeholder="0"
@@ -1491,10 +745,17 @@ const onDeliveryKey = (e: KeyboardEvent) => {
             />
           </UFormField>
           <UFormField label="البيان">
-            <UTextarea v-model="paymentForm.notes" class="w-full" :rows="2" />
+            <UTextarea
+              v-model="paymentForm.notes"
+              class="w-full"
+              :rows="2"
+            />
           </UFormField>
 
-          <div v-if="paymentDelivery" class="space-y-2 border-t border-default pt-3">
+          <div
+            v-if="paymentDelivery"
+            class="space-y-2 border-t border-default pt-3"
+          >
             <p class="text-sm font-medium text-highlighted">
               الدفعات السابقة
             </p>
@@ -1510,10 +771,16 @@ const onDeliveryKey = (e: KeyboardEvent) => {
               class="flex items-center justify-between gap-2 rounded-lg bg-elevated/40 px-3 py-2 text-sm"
             >
               <div class="min-w-0">
-                <p class="tabular-nums" dir="ltr">
+                <p
+                  class="tabular-nums"
+                  dir="ltr"
+                >
                   {{ formatMoney(pay.amount) }}
                 </p>
-                <p class="text-muted text-xs" dir="ltr">
+                <p
+                  class="text-xs text-muted"
+                  dir="ltr"
+                >
                   {{ pay.payment_date }}
                   <span v-if="pay.notes"> — {{ pay.notes }}</span>
                 </p>
@@ -1532,10 +799,17 @@ const onDeliveryKey = (e: KeyboardEvent) => {
       </template>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="outline" @click="paymentModalOpen = false">
+          <UButton
+            color="neutral"
+            variant="outline"
+            @click="paymentModalOpen = false"
+          >
             إلغاء
           </UButton>
-          <UButton :loading="saving" @click="saveDeliveryPayment">
+          <UButton
+            :loading="saving"
+            @click="saveDeliveryPayment"
+          >
             حفظ الدفعة
           </UButton>
         </div>

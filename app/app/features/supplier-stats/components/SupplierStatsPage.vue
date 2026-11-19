@@ -154,6 +154,9 @@ function supplierDetailTo(row: SupplierDetailRow) {
                   النقدية
                 </th>
                 <th :class="[thClass, groupHead, groupBorder]">
+                  مصروفات الشونة
+                </th>
+                <th :class="[thClass, groupHead, groupBorder]">
                   متوسط الأردب
                 </th>
                 <th
@@ -190,6 +193,9 @@ function supplierDetailTo(row: SupplierDetailRow) {
                 </th>
                 <th :class="thClass">
                   عمولة
+                </th>
+                <th :class="[thClass, groupBorder]">
+                  —
                 </th>
                 <th :class="[thClass, groupBorder]">
                   —
@@ -264,6 +270,12 @@ function supplierDetailTo(row: SupplierDetailRow) {
                   :class="[cellClass, groupBorder]"
                   dir="ltr"
                 >
+                  {{ formatMoney(row.warehouse_costs_total) }}
+                </td>
+                <td
+                  :class="[cellClass, groupBorder]"
+                  dir="ltr"
+                >
                   {{ formatMoney(row.avg_price_per_ardab) }}
                 </td>
                 <td
@@ -297,7 +309,7 @@ function supplierDetailTo(row: SupplierDetailRow) {
                 class="border-t border-default"
               >
                 <td
-                  colspan="13"
+                  colspan="14"
                   class="p-8 text-center text-muted"
                 >
                   لا توجد بيانات لهذا الصنف
@@ -352,6 +364,12 @@ function supplierDetailTo(row: SupplierDetailRow) {
                   dir="ltr"
                 >
                   {{ formatMoney(totals.commission_total) }}
+                </td>
+                <td
+                  :class="[cellClass, groupBorder]"
+                  dir="ltr"
+                >
+                  {{ formatMoney(totals.warehouse_costs_total) }}
                 </td>
                 <td
                   :class="[cellClass, groupBorder]"

@@ -6,12 +6,12 @@ import { withAccountType } from '~/utils/accountType'
 import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 import {
   buildSectionCards,
-  sectionProductKey,
   type SectionBalance,
   type SectionCard,
   type SectionIncomingRow,
   type SectionOutgoingRow,
   type WarehouseDetailBundle,
+  type WarehouseExpense,
   type WarehouseRow
 } from '../utils/warehouseDetailBundle'
 
@@ -19,7 +19,8 @@ export type {
   SectionBalance,
   SectionCard,
   SectionIncomingRow,
-  SectionOutgoingRow
+  SectionOutgoingRow,
+  WarehouseExpense
 }
 
 export type WarehouseLedgerIncomingRow = SectionIncomingRow & {
@@ -61,15 +62,23 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   const saving = ref(false)
   const warehouse = ref<WarehouseRow | null>(null)
   const sectionCards = ref<SectionCard[]>([])
-  const allSections = ref<{ id: string, name: string, notes: string | null, is_active: boolean }[]>([])
+  const allSections = ref<{ id: string, name: string, is_active: boolean }[]>([])
   const activeSeasonName = ref<string | null>(null)
   const activeSeasonId = ref<string | null>(null)
 
   const sectionModalOpen = ref(false)
   const editingSection = ref<SectionBalance | null>(null)
   const sectionForm = reactive({
-    name: '',
-    notes: ''
+    name: ''
+  })
+
+  const expenses = ref<WarehouseExpense[]>([])
+  const expenseModalOpen = ref(false)
+  const editingExpense = ref<WarehouseExpense | null>(null)
+  const expenseForm = reactive({
+    payment_date: todayIsoDate(),
+    title: '',
+    amount: '' as string
   })
 
   const transferModalOpen = ref(false)
@@ -77,21 +86,29 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   const transferFromSection = ref<SectionBalance | null>(null)
   const editingMovementId = ref<string | null>(null)
   const editingMovementQty = ref(0)
+  const editingMovementSnapshot = ref<{
+    to_kind: StockLocationKind
+    to_id: string
+    product_id: string
+    to_status_id: string
+    quantity_kg: number
+  } | null>(null)
   const stores = ref<{ id: string, name: string }[]>([])
   const meklas = ref<{ id: string, name: string }[]>([])
   const otherWarehouses = ref<{ id: string, name: string, account_type_name: string | null }[]>([])
   const destSections = ref<{ id: string, name: string }[]>([])
+  const destStoreSlots = ref<{ id: string, name: string, store_id: string }[]>([])
   const stockStatuses = ref<{ id: string, name: string, product_id: string }[]>([])
   type TransferUiKind = 'store' | 'mekla' | 'warehouse'
   const transferForm = reactive({
     to_kind: 'store' as TransferUiKind,
     to_warehouse_id: '' as string,
     to_id: '' as string,
+    to_slot_id: '' as string,
     status_id: '' as string,
     to_status_id: '' as string,
     quantity_kg: '' as string,
-    movement_date: todayIsoDate(),
-    notes: ''
+    movement_date: todayIsoDate()
   })
 
   type TransferPool = {
@@ -115,6 +132,25 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }
     return destSections.value.map(r => ({ label: r.name, value: r.id }))
   })
+
+  const transferStoreSlotOptions = computed(() =>
+    destStoreSlots.value.map(s => ({ label: s.name, value: s.id }))
+  )
+
+  const loadDestStoreSlots = async (storeId: string) => {
+    destStoreSlots.value = []
+    transferForm.to_slot_id = ''
+    if (!storeId) return
+    const { data, error } = await client
+      .from('store_slots')
+      .select('id, name, store_id')
+      .eq('store_id', storeId)
+      .eq('is_active', true)
+      .order('name')
+    if (error) throw error
+    destStoreSlots.value = data ?? []
+    transferForm.to_slot_id = destStoreSlots.value[0]?.id || ''
+  }
 
   const destWarehouseOptions = computed(() =>
     otherWarehouses.value.map(w => ({
@@ -140,12 +176,11 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     activeSeasonName.value = bundle.season?.name ?? null
     allSections.value = bundle.sections
     sectionCards.value = buildSectionCards(bundle)
+    expenses.value = bundle.expenses
 
     if (
       selectedSectionId.value !== 'all'
-      && !sectionCards.value.some(
-        s => sectionProductKey(s.section_id, s.product_id, s.status_id) === selectedSectionId.value
-      )
+      && !sectionCards.value.some(s => s.section_id === selectedSectionId.value)
     ) {
       selectedSectionId.value = 'all'
     }
@@ -171,16 +206,54 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }
   )
 
-  const invalidateAfterMutation = async () => {
+  const invalidateAfterMutation = async (extra?: {
+    toKind?: StockLocationKind
+    toId?: string
+    toWarehouseId?: string
+  }) => {
     const id = toValue(warehouseId)
-    await Promise.all([
+    const seasonId = detailQuery.seasonId.value
+    const tasks: Promise<unknown>[] = [
       queryClient.invalidateQueries({
-        queryKey: queryKeys.warehouseDetail(id, detailQuery.seasonId.value)
+        queryKey: queryKeys.warehouseDetail(id, seasonId)
       }),
       queryClient.invalidateQueries({
-        queryKey: queryKeys.warehouseBalances(detailQuery.seasonId.value)
-      })
-    ])
+        queryKey: queryKeys.warehouseBalances(seasonId)
+      }),
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] }),
+      queryClient.invalidateQueries({ queryKey: ['warehouse-detail'] })
+    ]
+    if (extra?.toKind === 'store' || extra?.toKind === 'store_slot') {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.storeBalances(seasonId)
+        }),
+        queryClient.invalidateQueries({ queryKey: ['stock-location-detail', 'store'] })
+      )
+    }
+    if (extra?.toKind === 'mekla') {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.meklaBalances(seasonId)
+        }),
+        queryClient.invalidateQueries({ queryKey: ['stock-location-detail', 'mekla'] })
+      )
+    }
+    if (extra?.toKind === 'section') {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.warehouseBalances(seasonId)
+        })
+      )
+      if (extra.toWarehouseId && extra.toWarehouseId !== id) {
+        tasks.push(
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.warehouseDetail(extra.toWarehouseId, seasonId)
+          })
+        )
+      }
+    }
+    await Promise.all(tasks)
   }
 
   const load = invalidateAfterMutation
@@ -188,14 +261,12 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   const openCreateSection = () => {
     editingSection.value = null
     sectionForm.name = ''
-    sectionForm.notes = ''
     sectionModalOpen.value = true
   }
 
   const openEditSection = (row: SectionBalance) => {
     editingSection.value = row
     sectionForm.name = row.section_name
-    sectionForm.notes = row.notes || ''
     sectionModalOpen.value = true
   }
 
@@ -210,7 +281,6 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
       const payload = {
         warehouse_id: id,
         name: sectionForm.name.trim(),
-        notes: sectionForm.notes.trim() || null,
         is_active: true
       }
       if (editingSection.value) {
@@ -235,13 +305,12 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
   }
 
   const softDeleteSection = async (row: SectionBalance) => {
-    const kgRemaining = sectionCards.value
-      .filter(s => s.section_id === row.section_id)
-      .reduce((sum, s) => sum + Number(s.kg_remaining), 0)
-    if (Math.abs(kgRemaining) > 0.001) {
+    const slices = sectionCards.value.filter(s => s.section_id === row.section_id)
+    const hasNonZero = slices.some(s => Math.abs(Number(s.kg_remaining)) > 0.001)
+    if (hasNonZero) {
       toast.add({
         title: 'لا يمكن حذف الربع',
-        description: 'الرصيد يجب أن يكون صفراً تقريباً',
+        description: 'الرصيد يجب أن يكون صفراً تقريباً لكل صنف وحالة',
         color: 'warning'
       })
       return
@@ -250,8 +319,18 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     if (!ok) return
     saving.value = true
     try {
-      await client.from('stock_movements').delete().eq('from_kind', 'section').eq('from_id', row.section_id)
-      await client.from('stock_movements').delete().eq('to_kind', 'section').eq('to_id', row.section_id)
+      const { error: fromErr } = await client
+        .from('stock_movements')
+        .delete()
+        .eq('from_kind', 'section')
+        .eq('from_id', row.section_id)
+      if (fromErr) throw fromErr
+      const { error: toErr } = await client
+        .from('stock_movements')
+        .delete()
+        .eq('to_kind', 'section')
+        .eq('to_id', row.section_id)
+      if (toErr) throw toErr
       const { error } = await client
         .from('warehouse_sections')
         .delete()
@@ -273,7 +352,99 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }
   }
 
-  const ensureDestinations = async () => {
+  const expensesTotal = computed(() =>
+    expenses.value.reduce((sum, e) => sum + Number(e.amount), 0)
+  )
+
+  const openCreateExpense = () => {
+    if (!activeSeasonId.value) {
+      toast.add({ title: 'لا يوجد موسم نشط', color: 'warning' })
+      return
+    }
+    editingExpense.value = null
+    expenseForm.payment_date = todayIsoDate()
+    expenseForm.title = ''
+    expenseForm.amount = ''
+    expenseModalOpen.value = true
+  }
+
+  const openEditExpense = (row: WarehouseExpense) => {
+    editingExpense.value = row
+    expenseForm.payment_date = row.payment_date
+    expenseForm.title = row.title
+    expenseForm.amount = String(row.amount)
+    expenseModalOpen.value = true
+  }
+
+  const saveExpense = async () => {
+    const id = toValue(warehouseId)
+    if (!id || !activeSeasonId.value) {
+      toast.add({ title: 'لا يوجد موسم نشط', color: 'warning' })
+      return
+    }
+    if (!expenseForm.payment_date) {
+      toast.add({ title: 'التاريخ مطلوب', color: 'warning' })
+      return
+    }
+    if (!expenseForm.title.trim()) {
+      toast.add({ title: 'العنوان مطلوب', color: 'warning' })
+      return
+    }
+    const amount = parseDecimal(expenseForm.amount)
+    if (!(amount > 0)) {
+      toast.add({ title: 'المبلغ يجب أن يكون أكبر من صفر', color: 'warning' })
+      return
+    }
+
+    saving.value = true
+    try {
+      const payload = {
+        warehouse_id: id,
+        season_id: activeSeasonId.value,
+        payment_date: expenseForm.payment_date,
+        title: expenseForm.title.trim(),
+        amount
+      }
+      if (editingExpense.value) {
+        const { error } = await client
+          .from('warehouse_expenses')
+          .update(payload)
+          .eq('id', editingExpense.value.id)
+        if (error) throw error
+        toast.add({ title: 'تم تحديث المصروف', color: 'success' })
+      } else {
+        const { error } = await client.from('warehouse_expenses').insert(payload)
+        if (error) throw error
+        toast.add({ title: 'تم تسجيل المصروف', color: 'success' })
+      }
+      expenseModalOpen.value = false
+      await load()
+      await queryClient.invalidateQueries({ queryKey: ['supplier-stats'] })
+    } catch (e: any) {
+      toast.add({ title: 'فشل الحفظ', description: e.message, color: 'error' })
+    } finally {
+      saving.value = false
+    }
+  }
+
+  const softDeleteExpense = async (row: WarehouseExpense) => {
+    const ok = await askConfirm(`حذف المصروف «${row.title}» نهائياً؟`)
+    if (!ok) return
+    saving.value = true
+    try {
+      const { error } = await client.from('warehouse_expenses').delete().eq('id', row.id)
+      if (error) throw error
+      toast.add({ title: 'تم الحذف', color: 'success' })
+      await load()
+      await queryClient.invalidateQueries({ queryKey: ['supplier-stats'] })
+    } catch (e: any) {
+      toast.add({ title: 'فشل الحذف', description: e.message, color: 'error' })
+    } finally {
+      saving.value = false
+    }
+  }
+
+  const ensureDestinations = async (opts?: { includeCurrentWarehouse?: boolean }) => {
     const currentId = toValue(warehouseId)
     const productId = selectedProductId.value || transferFromSection.value?.product_id || ''
     const [storesRes, meklasRes, warehousesRes, statusesRes] = await Promise.all([
@@ -300,7 +471,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     stores.value = storesRes.data ?? []
     meklas.value = meklasRes.data ?? []
     otherWarehouses.value = (warehousesRes.data ?? [])
-      .filter(w => w.id !== currentId)
+      .filter(w => opts?.includeCurrentWarehouse || w.id !== currentId)
       .map((w) => {
         const raw = w as { id: string, name: string, account_types?: { name: string } | null }
         return {
@@ -310,6 +481,32 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
         }
       })
     stockStatuses.value = statusesRes.data ?? []
+  }
+
+  const assertDestinationAllowsRemoval = async (opts: {
+    to_kind: StockLocationKind
+    to_id: string
+    product_id: string
+    to_status_id: string
+    season_id: string
+    remove_kg: number
+  }) => {
+    if (!(opts.remove_kg > 0.001)) return
+    const { data, error } = await client.rpc('location_remaining_kg', {
+      p_kind: opts.to_kind,
+      p_id: opts.to_id,
+      p_product_id: opts.product_id,
+      p_status_id: opts.to_status_id,
+      p_season_id: opts.season_id
+    })
+    if (error) throw error
+    const remaining = Number(data ?? 0)
+    const after = remaining - opts.remove_kg
+    if (after < -0.001) {
+      throw new Error(
+        `رصيد الوجهة سيصبح سالباً (${after.toFixed(2)} كجم). انقل أو احذف الحركات اللاحقة أولاً`
+      )
+    }
   }
 
   const loadDestSections = async (warehouseDestId: string) => {
@@ -325,21 +522,26 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     destSections.value = data ?? []
   }
 
-  const resetTransferForm = (preferKind?: TransferUiKind, statusId = '') => {
+  const resetTransferForm = async (preferKind?: TransferUiKind, statusId = '') => {
     const kind
       = preferKind
       || (stores.value.length ? 'store' : meklas.value.length ? 'mekla' : 'warehouse')
     transferForm.to_kind = kind
     transferForm.to_warehouse_id = ''
     transferForm.to_id = ''
+    transferForm.to_slot_id = ''
     transferForm.status_id = statusId || stockStatuses.value[0]?.id || ''
     transferForm.to_status_id = transferForm.status_id
     transferForm.quantity_kg = ''
     transferForm.movement_date = todayIsoDate()
-    transferForm.notes = ''
     destSections.value = []
-    if (kind === 'store') transferForm.to_id = stores.value[0]?.id || ''
-    else if (kind === 'mekla') transferForm.to_id = meklas.value[0]?.id || ''
+    destStoreSlots.value = []
+    if (kind === 'store') {
+      transferForm.to_id = stores.value[0]?.id || ''
+      if (transferForm.to_id) await loadDestStoreSlots(transferForm.to_id)
+    } else if (kind === 'mekla') {
+      transferForm.to_id = meklas.value[0]?.id || ''
+    }
   }
 
   const openTransfer = async (row: SectionBalance) => {
@@ -373,7 +575,8 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     transferFromSection.value = row
     editingMovementId.value = null
     editingMovementQty.value = 0
-    resetTransferForm(undefined, row.status_id || '')
+    editingMovementSnapshot.value = null
+    await resetTransferForm(undefined, row.status_id || '')
     transferModalOpen.value = true
   }
 
@@ -404,7 +607,8 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     transferFromSection.value = null
     editingMovementId.value = null
     editingMovementQty.value = 0
-    resetTransferForm()
+    editingMovementSnapshot.value = null
+    await resetTransferForm()
     const available = productFilteredCards.value
       .filter(r => r.product_id && r.status_id)
       .reduce((s, r) => s + Number(r.kg_remaining || 0), 0)
@@ -421,13 +625,13 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     transferScope.value = 'section'
     editingMovementId.value = null
     editingMovementQty.value = 0
+    editingMovementSnapshot.value = null
   }
 
   type MovementEditRow = {
     id: string
     date: string
     quantity_kg: number
-    notes: string | null
     product_id: string
     status_id: string | null
     to_status_id?: string | null
@@ -475,13 +679,13 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
             product_name: null,
             status_id: row.status_id,
             status_name: null,
-            notes: null,
             is_active: true,
             kg_in: 0,
             kg_out: 0,
             kg_remaining: Number(row.quantity_kg)
           } as SectionBalance
-      await ensureDestinations()
+      // Include current warehouse so same-warehouse ربع→ربع edits keep a valid select.
+      await ensureDestinations({ includeCurrentWarehouse: true })
     } catch (e: any) {
       toast.add({ title: 'تعذر تحميل الوجهات', description: e.message, color: 'error' })
       return
@@ -489,22 +693,48 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
 
     editingMovementId.value = row.id
     editingMovementQty.value = Number(row.quantity_kg)
+    editingMovementSnapshot.value = {
+      to_kind: row.to_kind,
+      to_id: row.to_id,
+      product_id: row.product_id,
+      to_status_id: row.to_status_id || row.status_id || '',
+      quantity_kg: Number(row.quantity_kg)
+    }
     transferScope.value = 'section'
 
     const uiKind: TransferUiKind
-      = row.to_kind === 'store' ? 'store' : row.to_kind === 'mekla' ? 'mekla' : 'warehouse'
+      = row.to_kind === 'store' || row.to_kind === 'store_slot'
+        ? 'store'
+        : row.to_kind === 'mekla'
+          ? 'mekla'
+          : 'warehouse'
     transferForm.to_kind = uiKind
     transferForm.status_id = row.status_id || stockStatuses.value[0]?.id || ''
     transferForm.to_status_id
       = row.to_status_id || transferForm.status_id || stockStatuses.value[0]?.id || ''
     transferForm.quantity_kg = String(row.quantity_kg)
     transferForm.movement_date = row.date
-    transferForm.notes = row.notes || ''
     transferForm.to_warehouse_id = ''
     transferForm.to_id = ''
+    transferForm.to_slot_id = ''
     destSections.value = []
+    destStoreSlots.value = []
 
-    if (uiKind === 'warehouse') {
+    if (uiKind === 'store') {
+      if (row.to_kind === 'store_slot') {
+        const { data: slot } = await client
+          .from('store_slots')
+          .select('id, store_id')
+          .eq('id', row.to_id)
+          .maybeSingle()
+        transferForm.to_id = slot?.store_id || ''
+        if (transferForm.to_id) await loadDestStoreSlots(transferForm.to_id)
+        transferForm.to_slot_id = slot?.id || row.to_id
+      } else {
+        transferForm.to_id = row.to_id
+        await loadDestStoreSlots(row.to_id)
+      }
+    } else if (uiKind === 'warehouse') {
       const { data: sec } = await client
         .from('warehouse_sections')
         .select('warehouse_id')
@@ -526,7 +756,16 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     transferModalOpen.value = true
   }
 
-  const deleteMovement = async (row: { id: string, kind?: string }) => {
+  const deleteMovement = async (row: {
+    id: string
+    kind?: string
+    to_kind?: StockLocationKind
+    to_id?: string
+    product_id?: string
+    status_id?: string | null
+    to_status_id?: string | null
+    quantity_kg?: number
+  }) => {
     if (row.kind === 'delivery') {
       toast.add({
         title: 'لا يمكن الحذف من هنا',
@@ -539,11 +778,30 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     if (!ok) return
     saving.value = true
     try {
+      if (
+        activeSeasonId.value
+        && row.to_kind
+        && row.to_id
+        && row.product_id
+        && (row.to_status_id || row.status_id)
+      ) {
+        await assertDestinationAllowsRemoval({
+          to_kind: row.to_kind,
+          to_id: row.to_id,
+          product_id: row.product_id,
+          to_status_id: row.to_status_id || row.status_id || '',
+          season_id: activeSeasonId.value,
+          remove_kg: Number(row.quantity_kg || 0)
+        })
+      }
       const { error } = await client.from('stock_movements').delete().eq('id', row.id)
       if (error) throw error
       toast.add({ title: 'تم حذف التحويل', color: 'success' })
       if (editingMovementId.value === row.id) cancelTransfer()
-      await load()
+      await invalidateAfterMutation({
+        toKind: row.to_kind,
+        toId: row.to_id
+      })
     } catch (e: any) {
       toast.add({ title: 'فشل الحذف', description: e.message, color: 'error' })
     } finally {
@@ -553,10 +811,19 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
 
   const onTransferKindChange = async () => {
     transferForm.to_id = ''
+    transferForm.to_slot_id = ''
     transferForm.to_warehouse_id = ''
     destSections.value = []
+    destStoreSlots.value = []
     if (transferForm.to_kind === 'store') {
       transferForm.to_id = stores.value[0]?.id || ''
+      if (transferForm.to_id) {
+        try {
+          await loadDestStoreSlots(transferForm.to_id)
+        } catch (e: any) {
+          toast.add({ title: 'تعذر تحميل خانات المخزن', description: e.message, color: 'error' })
+        }
+      }
     } else if (transferForm.to_kind === 'mekla') {
       transferForm.to_id = meklas.value[0]?.id || ''
     } else if (transferForm.to_kind === 'warehouse') {
@@ -582,6 +849,14 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }
   }
 
+  const onTransferStoreChange = async () => {
+    try {
+      await loadDestStoreSlots(transferForm.to_id)
+    } catch (e: any) {
+      toast.add({ title: 'تعذر تحميل خانات المخزن', description: e.message, color: 'error' })
+    }
+  }
+
   const saveTransfer = async () => {
     if (!activeSeasonId.value) return
     const qty = parseDecimal(transferForm.quantity_kg)
@@ -601,15 +876,23 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
       toast.add({ title: 'اختر الشونة الوجهة', color: 'warning' })
       return
     }
+    if (transferForm.to_kind === 'store' && !transferForm.to_slot_id) {
+      toast.add({ title: 'اختر خانة المخزن', color: 'warning' })
+      return
+    }
     if (!(qty > 0)) {
       toast.add({ title: 'الكمية يجب أن تكون أكبر من صفر', color: 'warning' })
       return
     }
 
     const toKind: StockLocationKind
-      = transferForm.to_kind === 'warehouse' ? 'section' : transferForm.to_kind
-    const toId = transferForm.to_id
-    const baseNotes = transferForm.notes.trim()
+      = transferForm.to_kind === 'warehouse'
+        ? 'section'
+        : transferForm.to_kind === 'store'
+          ? 'store_slot'
+          : transferForm.to_kind
+    const toId
+      = transferForm.to_kind === 'store' ? transferForm.to_slot_id : transferForm.to_id
 
     // Edit existing single movement
     if (editingMovementId.value) {
@@ -629,6 +912,25 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
       }
       saving.value = true
       try {
+        const snap = editingMovementSnapshot.value
+        if (snap && activeSeasonId.value) {
+          const sameDest
+            = snap.to_kind === toKind
+            && snap.to_id === toId
+            && snap.product_id === (transferFromSection.value.product_id || snap.product_id)
+            && snap.to_status_id === transferForm.to_status_id
+          const removeKg = sameDest
+            ? Math.max(0, snap.quantity_kg - qty)
+            : snap.quantity_kg
+          await assertDestinationAllowsRemoval({
+            to_kind: snap.to_kind,
+            to_id: snap.to_id,
+            product_id: snap.product_id,
+            to_status_id: snap.to_status_id,
+            season_id: activeSeasonId.value,
+            remove_kg: removeKg
+          })
+        }
         const { error } = await client
           .from('stock_movements')
           .update({
@@ -637,14 +939,18 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
             movement_date: transferForm.movement_date,
             quantity_kg: qty,
             to_kind: toKind,
-            to_id: toId,
-            notes: baseNotes || null
+            to_id: toId
           })
           .eq('id', editingMovementId.value)
         if (error) throw error
         toast.add({ title: 'تم تحديث التحويل', color: 'success' })
+        const destWarehouseId = transferForm.to_warehouse_id || undefined
         cancelTransfer()
-        await load()
+        await invalidateAfterMutation({
+          toKind,
+          toId,
+          toWarehouseId: destWarehouseId
+        })
       } catch (e: any) {
         toast.add({ title: 'فشل التحديث', description: e.message, color: 'error' })
       } finally {
@@ -676,8 +982,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
           from_kind: 'section' as const,
           from_id: line.section_id,
           to_kind: toKind,
-          to_id: toId,
-          notes: baseNotes || null
+          to_id: toId
         }
       })
       const { error } = await client.from('stock_movements').insert(rows)
@@ -688,8 +993,13 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
           : 'تم التحويل',
         color: 'success'
       })
+      const destWarehouseId = transferForm.to_warehouse_id || undefined
       cancelTransfer()
-      await load()
+      await invalidateAfterMutation({
+        toKind,
+        toId,
+        toWarehouseId: destWarehouseId
+      })
     } catch (e: any) {
       toast.add({ title: 'فشل التحويل', description: e.message, color: 'error' })
     } finally {
@@ -746,13 +1056,28 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }, { replace: true })
   })
 
+  const emptySectionCard = (section: { id: string, name: string, is_active: boolean }): SectionCard => ({
+    section_id: section.id,
+    section_name: section.name,
+    product_id: null,
+    product_name: null,
+    status_id: null,
+    status_name: null,
+    is_active: section.is_active,
+    kg_in: 0,
+    kg_out: 0,
+    kg_remaining: 0,
+    incoming: [],
+    outgoing: []
+  })
+
   const productFilteredCards = computed(() => {
     const pid = selectedProductId.value
     const matching = pid
       ? sectionCards.value.filter(s => s.product_id === pid)
       : sectionCards.value
 
-    return matching
+    const active = matching
       .filter(s =>
         Number(s.kg_in || 0) > 0.001
         || Number(s.kg_out || 0) > 0.001
@@ -760,11 +1085,18 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
         || s.incoming.length > 0
         || s.outgoing.length > 0
       )
-      .sort((a, b) => {
-        const byAmount = Number(b.kg_remaining || 0) - Number(a.kg_remaining || 0)
-        if (byAmount !== 0) return byAmount
-        return a.section_name.localeCompare(b.section_name, 'ar')
-      })
+
+    // Keep empty أرباع visible so they can be renamed/deleted after create.
+    const seen = new Set(active.map(s => s.section_id))
+    const empties = allSections.value
+      .filter(s => s.is_active && !seen.has(s.id))
+      .map(emptySectionCard)
+
+    return [...active, ...empties].sort((a, b) => {
+      const byAmount = Number(b.kg_remaining || 0) - Number(a.kg_remaining || 0)
+      if (byAmount !== 0) return byAmount
+      return a.section_name.localeCompare(b.section_name, 'ar')
+    })
   })
 
   const transferPools = computed<TransferPool[]>(() => {
@@ -830,8 +1162,8 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
       if (need <= 0.001) break
       const take = Math.min(pool.kg_remaining, need)
       if (take > 0.001) {
-        plan.push({ ...pool, qty: Number(take.toFixed(4)) })
-        need = Number((need - take).toFixed(4))
+        plan.push({ ...pool, qty: Number(take.toFixed(3)) })
+        need = Number((need - take).toFixed(3))
       }
     }
     return { ok: need <= 0.001, total, plan }
@@ -852,11 +1184,13 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     const kgRemaining = rows.reduce((s, r) => s + Number(r.kg_remaining || 0), 0)
     const wasteRatio = kgIn > 0.001 ? kgRemaining / kgIn : 0
     return {
-      sectionsCount: new Set(rows.map(r => r.section_id)).size,
+      sectionsCount: allSections.value.filter(s => s.is_active).length
+        || new Set(rows.map(r => r.section_id)).size,
       kgIn,
       kgOut,
       kgRemaining,
-      wasteRatio
+      wasteRatio,
+      expensesTotal: expensesTotal.value
     }
   })
 
@@ -883,11 +1217,13 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     const prevFrom = transferFromSection.value
     const prevEditingId = editingMovementId.value
     const prevEditingQty = editingMovementQty.value
+    const prevEditingSnap = editingMovementSnapshot.value
 
     transferScope.value = 'warehouse'
     transferFromSection.value = null
     editingMovementId.value = null
     editingMovementQty.value = 0
+    editingMovementSnapshot.value = null
     transferForm.status_id = ''
 
     const qty = transferAvailableKg.value
@@ -898,6 +1234,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     transferFromSection.value = prevFrom
     editingMovementId.value = prevEditingId
     editingMovementQty.value = prevEditingQty
+    editingMovementSnapshot.value = prevEditingSnap
 
     if (!allocation.ok || !allocation.plan.length) {
       toast.add({
@@ -920,8 +1257,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
         from_kind: 'section' as const,
         from_id: line.section_id,
         to_kind: 'waste' as const,
-        to_id: id,
-        notes: 'هدر'
+        to_id: id
       }))
       const { error } = await client.from('stock_movements').insert(rows)
       if (error) throw error
@@ -939,24 +1275,21 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     }
   }
 
-  const sectionFilterOptions = computed(() => [
-    { label: 'كل الأرباع', value: 'all' },
-    ...productFilteredCards.value.map(s => ({
-      label: [
-        s.section_name,
-        s.status_name || null,
-        s.product_name || null
-      ].filter(Boolean).join(' — '),
-      value: sectionProductKey(s.section_id, s.product_id, s.status_id)
-    }))
-  ])
+  const sectionFilterOptions = computed(() => {
+    const seen = new Set<string>()
+    const options: { label: string, value: string }[] = [{ label: 'كل الأرباع', value: 'all' }]
+    for (const s of productFilteredCards.value) {
+      if (seen.has(s.section_id)) continue
+      seen.add(s.section_id)
+      options.push({ label: s.section_name, value: s.section_id })
+    }
+    return options
+  })
 
   const filteredSectionCards = computed(() => {
     let rows = productFilteredCards.value
     if (selectedSectionId.value !== 'all') {
-      rows = rows.filter(
-        s => sectionProductKey(s.section_id, s.product_id, s.status_id) === selectedSectionId.value
-      )
+      rows = rows.filter(s => s.section_id === selectedSectionId.value)
     }
     return rows
   })
@@ -974,7 +1307,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
           created_at: row.created_at,
           source: row.source,
           quantity_kg: row.quantity_kg,
-          notes: row.notes,
+          status_name: row.status_name ?? card.status_name ?? null,
           kind: row.kind,
           product_id: row.product_id,
           status_id: row.status_id,
@@ -995,7 +1328,6 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
           destination: row.destination,
           status_name: row.status_name ?? card.status_name ?? null,
           quantity_kg: row.quantity_kg,
-          notes: row.notes,
           product_id: row.product_id,
           status_id: row.status_id,
           to_status_id: row.to_status_id ?? row.status_id,
@@ -1051,6 +1383,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     editingMovementId,
     transferForm,
     transferToOptions,
+    transferStoreSlotOptions,
     destWarehouseOptions,
     transferAvailableKg,
     transferAllocation,
@@ -1059,6 +1392,18 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     openEditSection,
     saveSection,
     softDeleteSection,
+    expenses,
+    expensesTotal,
+    expenseModalOpen,
+    editingExpense,
+    expenseForm,
+    openCreateExpense,
+    openEditExpense,
+    saveExpense,
+    softDeleteExpense,
+    setExpenseAmount: (raw: string) => {
+      expenseForm.amount = normalizeDecimalInput(raw)
+    },
     openTransfer,
     openWarehouseTransfer,
     openEditMovement,
@@ -1066,6 +1411,7 @@ export function useWarehouseDetail(warehouseId: MaybeRefOrGetter<string>) {
     cancelTransfer,
     onTransferKindChange,
     onTransferWarehouseChange,
+    onTransferStoreChange,
     saveTransfer,
     saveWasteAllRemaining,
     setTransferQty: (raw: string) => {
