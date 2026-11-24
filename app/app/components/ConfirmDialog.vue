@@ -11,7 +11,12 @@ const onOpenChange = (open: boolean) => {
     :open="state.open"
     :title="state.title"
     :description="state.description"
-    :ui="{ footer: 'justify-end gap-2' }"
+    :dismissible="false"
+    :ui="{
+      overlay: 'z-[80]',
+      content: 'z-[80]',
+      footer: 'justify-end gap-2'
+    }"
     @update:open="onOpenChange"
   >
     <template #footer>

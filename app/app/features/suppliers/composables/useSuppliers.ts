@@ -9,8 +9,6 @@ import {
 import { useActiveProductsQuery } from '~/composables/queries/useLookupQueries'
 import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 
-export type { SupplierBalance }
-
 export function useSuppliers() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()

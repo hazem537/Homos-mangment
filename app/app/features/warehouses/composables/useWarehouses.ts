@@ -7,9 +7,6 @@ import {
   type WarehouseListRow
 } from '~/composables/queries/useWarehouseBalancesQuery'
 
-export type { WarehouseListRow }
-export type WarehouseBalance = WarehouseListRow
-
 export function useWarehouses() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()

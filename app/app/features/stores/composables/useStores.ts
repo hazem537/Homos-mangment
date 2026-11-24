@@ -6,9 +6,6 @@ import {
   type StoreListRow
 } from '~/composables/queries/useStoreBalancesQuery'
 
-export type { StoreListRow }
-export type StoreBalance = StoreListRow
-
 export function useStores() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()

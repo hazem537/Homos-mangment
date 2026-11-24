@@ -148,6 +148,60 @@ export function useAccountTypes() {
     }
   }
 
+  /** Hard-delete when unused; otherwise soft-hide so FK rows stay valid. */
+  const deleteType = async (id: string) => {
+    if (!id) return false
+    saving.value = true
+    try {
+      const [{ count: supplierCount, error: sErr }, { count: warehouseCount, error: wErr }]
+        = await Promise.all([
+          client
+            .from('suppliers')
+            .select('id', { count: 'exact', head: true })
+            .eq('account_type_id', id),
+          client
+            .from('warehouses')
+            .select('id', { count: 'exact', head: true })
+            .eq('account_type_id', id)
+        ])
+      if (sErr) throw sErr
+      if (wErr) throw wErr
+
+      const inUse = (supplierCount ?? 0) > 0 || (warehouseCount ?? 0) > 0
+      if (inUse) {
+        const { error } = await client
+          .from('account_types')
+          .update({ is_active: false })
+          .eq('id', id)
+        if (error) throw error
+        toast.add({
+          title: 'تم إخفاء النوع',
+          description: 'مرتبط بمورد أو شونة — أُخفي من القوائم فقط',
+          color: 'success'
+        })
+      } else {
+        const { error } = await client
+          .from('account_types')
+          .delete()
+          .eq('id', id)
+        if (error) throw error
+        toast.add({ title: 'تم حذف النوع', color: 'success' })
+      }
+      await loadTypes()
+      await invalidateLookups()
+      return true
+    } catch (e: any) {
+      toast.add({
+        title: 'فشل حذف النوع',
+        description: e.message,
+        color: 'error'
+      })
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
   return {
     types,
     loading,
@@ -159,6 +213,7 @@ export function useAccountTypes() {
     createType,
     renameType,
     updateType,
-    deactivateType
+    deactivateType,
+    deleteType
   }
 }

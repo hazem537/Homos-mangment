@@ -11,12 +11,13 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
 
   imports: {
+    // Feature utils are imported explicitly — scanning them duplicates
+    // shared names (CellValue, ACTION_*, SeasonLite, matrixForHot, …).
     dirs: [
       'composables',
       'composables/queries',
       'utils',
-      'features/**/composables',
-      'features/**/utils'
+      'features/**/composables'
     ]
   },
 

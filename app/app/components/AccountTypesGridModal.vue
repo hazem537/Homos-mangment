@@ -15,7 +15,7 @@ const {
   loadTypes,
   createType,
   updateType,
-  deactivateType
+  deleteType
 } = useAccountTypes()
 
 const { confirm: askConfirm } = useConfirmDialog()
@@ -91,13 +91,14 @@ const commitRow = async (row: DraftRow) => {
 
 const commitNew = async () => {
   const name = newRow.value.name.trim()
-  if (!name || cellSaving.value) return
+  if (!name || cellSaving.value || saving.value) return
   cellSaving.value = true
   try {
     const id = await createType(name, newRow.value.notes)
     if (id) {
       emit('changed')
       newRow.value = { name: '', notes: '' }
+      await nextTick()
       focusKey.value = 'new:name'
     }
   } finally {
@@ -110,16 +111,29 @@ const onNewBlur = async (e: FocusEvent) => {
   await nextTick()
   const related = e.relatedTarget as HTMLElement | null
   if (related?.closest?.('[data-new-row]')) return
+  // Skip auto-create when focus moves to dialog chrome / confirm
+  if (related?.closest?.('[role="dialog"]')) return
   await commitNew()
 }
 
-const onHide = async (row: DraftRow) => {
-  const ok = await askConfirm(
-    `إخفاء النوع «${row.name}»؟\nلن يظهر في القوائم الجديدة، والموردون المرتبطون يحتفظون به.`
-  )
-  if (!ok) return
-  const done = await deactivateType(row.id)
+const onDelete = async (row: DraftRow) => {
+  // Close this modal first — nested UModal confirm otherwise settles as cancel.
+  open.value = false
+  await nextTick()
+  const ok = await askConfirm({
+    title: 'تأكيد الحذف',
+    description: `حذف النوع «${row.name}»؟\nإن كان مرتبطاً بمورد أو شونة سيُخفى من القوائم فقط.`,
+    confirmLabel: 'حذف',
+    cancelLabel: 'إلغاء',
+    confirmColor: 'error'
+  })
+  if (!ok) {
+    open.value = true
+    return
+  }
+  const done = await deleteType(row.id)
   if (done) emit('changed')
+  else open.value = true
 }
 
 const onKeyCell = async (
@@ -152,7 +166,7 @@ const inputClass
   >
     <template #body>
       <p class="mb-3 text-xs text-muted">
-        عدّل الخلايا مباشرة مثل Excel — Enter أو الخروج من الخلية يحفظ. الصف الأخير لإضافة نوع جديد.
+        عدّل الخلايا مباشرة — Enter أو الخروج من الخلية يحفظ. الصف الأخير + زر إضافة لنوع جديد.
       </p>
 
       <div
@@ -179,7 +193,7 @@ const inputClass
                 <th class="p-2 text-start font-semibold">
                   ملاحظات
                 </th>
-                <th class="w-24 p-2 text-center font-semibold">
+                <th class="w-28 p-2 text-center font-semibold">
                   إجراءات
                 </th>
               </tr>
@@ -219,10 +233,10 @@ const inputClass
                     size="xs"
                     color="error"
                     variant="ghost"
-                    icon="i-lucide-eye-off"
+                    icon="i-lucide-trash-2"
                     :disabled="saving || cellSaving"
-                    title="إخفاء"
-                    @click="onHide(row)"
+                    title="حذف"
+                    @click="onDelete(row)"
                   />
                 </td>
               </tr>
@@ -255,8 +269,16 @@ const inputClass
                     @keydown="onKeyCell($event, 'new', 'notes')"
                   >
                 </td>
-                <td class="p-1 text-center text-xs text-muted">
-                  جديد
+                <td class="p-1 text-center">
+                  <UButton
+                    size="xs"
+                    color="primary"
+                    variant="soft"
+                    icon="i-lucide-plus"
+                    :disabled="saving || cellSaving || !newRow.name.trim()"
+                    title="إضافة"
+                    @click="commitNew"
+                  />
                 </td>
               </tr>
             </tbody>

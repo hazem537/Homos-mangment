@@ -6,7 +6,8 @@ export const TABLE_KEYS = {
   suppliersDetailTransfers: 'suppliers.detail.transfers',
   suppliersDetailDeliveries: 'suppliers.detail.deliveries',
   warehousesDetailWorkbook: 'warehouses.detail.workbook',
-  storesDetailWorkbook: 'stores.detail.workbook'
+  storesDetailWorkbook: 'stores.detail.workbook',
+  meklasDetailWorkbook: 'meklas.detail.workbook'
 } as const
 
 export type TableKey = (typeof TABLE_KEYS)[keyof typeof TABLE_KEYS]
@@ -33,4 +34,12 @@ export function storesDetailWorkbookKey(storeId: string) {
   return id
     ? `${TABLE_KEYS.storesDetailWorkbook}.${id}`
     : TABLE_KEYS.storesDetailWorkbook
+}
+
+/** Per-user + per-mekla workbook styles. */
+export function meklasDetailWorkbookKey(meklaId: string) {
+  const id = String(meklaId || '').trim()
+  return id
+    ? `${TABLE_KEYS.meklasDetailWorkbook}.${id}`
+    : TABLE_KEYS.meklasDetailWorkbook
 }

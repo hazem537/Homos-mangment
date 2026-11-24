@@ -9,8 +9,6 @@ import {
 } from '~/features/stores/utils/stockLocationDetailBundle'
 import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 
-export type { StockLocationDetailKind }
-
 export type LocationMovementRow = LocationMovementLite & {
   qty_before: number
   qty_after: number

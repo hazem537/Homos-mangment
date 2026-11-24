@@ -5,6 +5,7 @@ import { useWarehouseDetailQuery } from '~/composables/queries/useWarehouseDetai
 import { withAccountType } from '~/utils/accountType'
 import { normalizeDecimalInput, parseDecimal } from '~/utils/formatNumber'
 import {
+  applySectionRunningBalances,
   buildSectionCards,
   type SectionBalance,
   type SectionCard,
@@ -14,14 +15,6 @@ import {
   type WarehouseExpense,
   type WarehouseRow
 } from '../utils/warehouseDetailBundle'
-
-export type {
-  SectionBalance,
-  SectionCard,
-  SectionIncomingRow,
-  SectionOutgoingRow,
-  WarehouseExpense
-}
 
 export type WarehouseLedgerIncomingRow = SectionIncomingRow & {
   section_id: string

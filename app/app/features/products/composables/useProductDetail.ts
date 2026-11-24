@@ -1,7 +1,6 @@
 import type { Database } from '~/types/database.types'
-
-export type ProductRow = Database['public']['Tables']['products']['Row']
-export type StockStatusRow = Database['public']['Tables']['stock_statuses']['Row']
+import type { ProductRow } from './useProducts'
+import type { StockStatusRow } from '~/features/stock-statuses/composables/useStockStatuses'
 
 export function useProductDetail(productId: MaybeRefOrGetter<string>) {
   const client = useSupabaseClient<Database>()
@@ -192,21 +191,42 @@ export function useProductDetail(productId: MaybeRefOrGetter<string>) {
       })
       return
     }
-    const ok = await askConfirm(`حذف الحالة «${row.name}» نهائياً؟`)
+    const ok = await askConfirm({
+      title: 'تأكيد الحذف',
+      description: `حذف الحالة «${row.name}»؟`,
+      confirmLabel: 'حذف',
+      cancelLabel: 'إلغاء',
+      confirmColor: 'error'
+    })
     if (!ok) return
     saving.value = true
     try {
       const { error } = await client.from('stock_statuses').delete().eq('id', row.id)
-      if (error) throw error
+      if (error) {
+        // In use → soft-hide so lists stay clean without breaking history
+        const msg = String(error.message || '')
+        if (msg.includes('foreign key') || msg.includes('violates')) {
+          const { error: softErr } = await client
+            .from('stock_statuses')
+            .update({ is_active: false })
+            .eq('id', row.id)
+          if (softErr) throw softErr
+          toast.add({
+            title: 'تم إخفاء الحالة',
+            description: 'مرتبطة بتسليمات أو حركات — أُخفيت من القوائم فقط',
+            color: 'success'
+          })
+          await load()
+          return
+        }
+        throw error
+      }
       toast.add({ title: 'تم حذف الحالة', color: 'success' })
       await load()
     } catch (e: any) {
-      const msg = String(e.message || '')
       toast.add({
         title: 'فشل الحذف',
-        description: msg.includes('foreign key') || msg.includes('violates')
-          ? 'لا يمكن الحذف لوجود تسليمات أو حركات مرتبطة'
-          : msg,
+        description: e.message,
         color: 'error'
       })
     } finally {

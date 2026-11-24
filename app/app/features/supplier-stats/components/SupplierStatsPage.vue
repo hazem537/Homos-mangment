@@ -5,7 +5,7 @@ import {
   signedTone
 } from '~/utils/formatNumber'
 import { accountTypeLabel } from '~/utils/accountType'
-import type { SupplierDetailRow } from '../composables/useSupplierStats'
+import type { SupplierDetailRow } from '../utils/fetchSupplierStats'
 
 const {
   initialLoading,

@@ -109,13 +109,47 @@ export function useProducts() {
   }
 
   const softDelete = async (row: ProductRow) => {
-    const ok = await askConfirm(`حذف الصنف «${row.name}» نهائياً؟`)
+    const ok = await askConfirm({
+      title: 'تأكيد الحذف',
+      description: `حذف الصنف «${row.name}»؟\nإن كان مستخدماً سيُخفى من القوائم فقط.`,
+      confirmLabel: 'حذف',
+      cancelLabel: 'إلغاء',
+      confirmColor: 'error'
+    })
     if (!ok) return
     saving.value = true
     try {
-      const { error } = await client.from('products').delete().eq('id', row.id)
-      if (error) throw error
-      toast.add({ title: 'تم حذف الصنف', color: 'success' })
+      const [{ count: supplierCount, error: sErr }, { count: purchaseCount, error: pErr }]
+        = await Promise.all([
+          client
+            .from('suppliers')
+            .select('id', { count: 'exact', head: true })
+            .eq('product_id', row.id),
+          client
+            .from('purchases')
+            .select('id', { count: 'exact', head: true })
+            .eq('product_id', row.id)
+        ])
+      if (sErr) throw sErr
+      if (pErr) throw pErr
+
+      const inUse = (supplierCount ?? 0) > 0 || (purchaseCount ?? 0) > 0
+      if (inUse) {
+        const { error } = await client
+          .from('products')
+          .update({ is_active: false })
+          .eq('id', row.id)
+        if (error) throw error
+        toast.add({
+          title: 'تم إخفاء الصنف',
+          description: 'مرتبط ببيانات — أُخفي من القوائم فقط',
+          color: 'success'
+        })
+      } else {
+        const { error } = await client.from('products').delete().eq('id', row.id)
+        if (error) throw error
+        toast.add({ title: 'تم حذف الصنف', color: 'success' })
+      }
       await load()
     } catch (e: any) {
       const msg = String(e.message || '')

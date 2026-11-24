@@ -36,13 +36,6 @@ import type {
   WarehouseSectionLite,
 } from "~/features/suppliers/utils/supplierDetailBundle";
 
-export type {
-  SupplierDelivery,
-  SupplierDue,
-  SupplierPurchase,
-  SupplierTransfer,
-};
-
 export type DeliveryDestinationKind = "warehouse" | "store";
 
 function todayIsoDate() {

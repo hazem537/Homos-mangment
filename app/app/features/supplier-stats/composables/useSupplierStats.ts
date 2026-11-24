@@ -13,8 +13,6 @@ import {
   type SupplierStatsRow
 } from '../utils/fetchSupplierStats'
 
-export type { SupplierDetailRow, SupplierStatsRow }
-
 function emptyTotals(): SupplierStatsRow {
   return {
     account_type_id: 'all',

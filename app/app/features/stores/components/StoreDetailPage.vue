@@ -235,13 +235,11 @@ const storeStats = computed(() => {
   const kgIn = stats.value.kgIn
   const kgOut = stats.value.kgOut
   const kgRemaining = stats.value.kgRemaining
-  const wasteRatio = kgIn > 0.001 ? kgRemaining / kgIn : 0
   return {
     slotsCount: slots.value.length,
     kgIn,
     kgOut,
-    kgRemaining,
-    wasteRatio
+    kgRemaining
   }
 })
 

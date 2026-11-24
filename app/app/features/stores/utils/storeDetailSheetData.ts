@@ -82,7 +82,6 @@ export type StoreWorkbookStats = {
   kgIn: number
   kgOut: number
   kgRemaining: number
-  wasteRatio: number
 }
 
 export type StoreRegionKind =
@@ -170,15 +169,14 @@ function sectionBlockRows(sec: StoreSheetSection) {
 
 /** Store KPI band: labels row + values row (fits both 10-col blocks). */
 export function buildStoreKpiRows(stats: StoreWorkbookStats): CellValue[][] {
-  const remainingPct = stats.wasteRatio * 100
   return [
-    ['الخانات', 'وارد', 'منصرف', 'الرصيد', 'نسبة المتبقي %', '', '', '', '', ''],
+    ['الخانات', 'وارد', 'منصرف', 'الرصيد', '', '', '', '', '', ''],
     [
       formatNumber(stats.slotsCount),
       formatNumber(stats.kgIn),
       formatNumber(stats.kgOut),
       formatNumber(stats.kgRemaining),
-      formatNumber(remainingPct),
+      '',
       '',
       '',
       '',

@@ -6,9 +6,6 @@ import {
   type MeklaListRow
 } from '~/composables/queries/useMeklaBalancesQuery'
 
-export type { MeklaListRow }
-export type MeklaBalance = MeklaListRow
-
 export function useMeklas() {
   const client = useSupabaseClient<Database>()
   const toast = useToast()
